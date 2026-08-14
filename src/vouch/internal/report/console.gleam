@@ -86,6 +86,10 @@ fn print_failure(failure: #(String, outcome.FailureDetail)) -> Nil {
       print_panic_detail(p)
     }
     outcome.UnknownDetail(raw) -> io.println("    " <> string.inspect(raw))
+    outcome.TimeoutDetail(ms) ->
+      io.println("    timed out after " <> int.to_string(ms) <> "ms")
+    outcome.ExitDetail(raw) ->
+      io.println("    test process died: " <> string.inspect(raw))
   }
 }
 

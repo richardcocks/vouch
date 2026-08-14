@@ -2,7 +2,7 @@
 -export([
     find_test_files/0,
     exported_zero_arity/1,
-    run_test/2,
+    run_test/3,
     catch_panic/1,
     decode_panic/1,
     now_microseconds/0,
@@ -36,11 +36,42 @@ exported_zero_arity(ModuleName) ->
             []
     end.
 
-%% Run one test by name, capturing anything it throws.
-run_test(ModuleName, FunctionName) ->
+%% Run one test by name in its own monitored process. The test process
+%% catches its own panic and sends the payload back, so decoding never
+%% depends on exit-reason fidelity; the DOWN branch only fires when the
+%% process died without reporting (exit signal, linked crash), and a test
+%% that outlives the timeout is killed. Return values are the constructors
+%% of vouch/internal/outcome.Invocation.
+run_test(ModuleName, FunctionName, TimeoutMs) ->
     Module = binary_to_atom(beam_name(ModuleName), utf8),
     Function = binary_to_atom(FunctionName, utf8),
-    catch_panic(fun() -> Module:Function() end).
+    Self = self(),
+    {Pid, Ref} = spawn_monitor(fun() ->
+        Self ! {vouch_result, self(), catch_panic(fun() -> Module:Function() end)}
+    end),
+    receive
+        {vouch_result, Pid, {ok, nil}} ->
+            erlang:demonitor(Ref, [flush]),
+            passed;
+        {vouch_result, Pid, {error, Reason}} ->
+            erlang:demonitor(Ref, [flush]),
+            {panicked, Reason};
+        {'DOWN', Ref, process, Pid, Reason} ->
+            {died, normalize_exit_reason(Reason)}
+    after TimeoutMs ->
+        erlang:demonitor(Ref, [flush]),
+        exit(Pid, kill),
+        receive
+            {vouch_result, Pid, _} -> ok
+        after 0 -> ok
+        end,
+        {timed_out, TimeoutMs}
+    end.
+
+%% Error exits carry {Reason, Stacktrace}; unwrap so a linked Gleam panic's
+%% payload map is decodable.
+normalize_exit_reason({Reason, Stack}) when is_list(Stack) -> Reason;
+normalize_exit_reason(Reason) -> Reason.
 
 %% Call a function, capturing anything it throws. The raw reason is returned
 %% for Gleam-side decoding; a Gleam panic's reason is a map tagged

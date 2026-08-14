@@ -85,7 +85,7 @@ fn now_microseconds() -> Int
 // whole loop is Gleam.
 
 @target(erlang)
-pub fn run(rep: Reporter(s), filter: Option(String)) -> Nil {
+pub fn run(rep: Reporter(s), filter: Option(String), timeout_ms: Int) -> Nil {
   let started = now_microseconds()
   let tests =
     find_test_files()
@@ -111,9 +111,9 @@ pub fn run(rep: Reporter(s), filter: Option(String)) -> Nil {
       let #(module, function) = test_case
       let state = rep.handle(state, event.TestStart(module, function))
       let test_started = now_microseconds()
-      let raw = run_test(module, function)
+      let invocation = run_in_process(module, function, timeout_ms)
       let duration = now_microseconds() - test_started
-      let out = outcome.classify(module, function, raw)
+      let out = outcome.classify(module, function, invocation)
       let state =
         rep.handle(state, event.TestResult(module, function, out, duration))
       #(state, [out, ..outcomes])
@@ -136,17 +136,25 @@ fn find_test_files() -> List(String)
 @external(erlang, "vouch_ffi", "exported_zero_arity")
 fn exported_zero_arity(module: String) -> List(String)
 
+/// Run one exported zero-arity function in its own monitored process with a
+/// timeout. Public so vouch's own suite can exercise isolation directly.
 @target(erlang)
 @external(erlang, "vouch_ffi", "run_test")
-fn run_test(module: String, function: String) -> Result(Nil, Dynamic)
+pub fn run_in_process(
+  module: String,
+  function: String,
+  timeout_ms: Int,
+) -> outcome.Invocation
 
 // On the JavaScript target dynamic import and test invocation are async, so
 // sequencing lives in the FFI, which threads reporter state through Gleam
 // callbacks. The state tuple is (reporter state, outcomes so far, start time
 // of the test in flight).
 
+// JavaScript has no cheap process primitive: tests run in-process and the
+// timeout does not apply. A documented target difference.
 @target(javascript)
-pub fn run(rep: Reporter(s), filter: Option(String)) -> Nil {
+pub fn run(rep: Reporter(s), filter: Option(String), _timeout_ms: Int) -> Nil {
   let started = now_microseconds()
   js_run_tests(
     #(rep.init, [], 0),
@@ -163,7 +171,7 @@ pub fn run(rep: Reporter(s), filter: Option(String)) -> Nil {
     fn(state, module, function, raw) {
       let #(st, outs, test_started) = state
       let duration = now_microseconds() - test_started
-      let out = outcome.classify(module, function, raw)
+      let out = outcome.classify(module, function, outcome.from_caught(raw))
       let st =
         rep.handle(st, event.TestResult(module, function, out, duration))
       #(st, [out, ..outs], 0)

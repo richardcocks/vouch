@@ -30,3 +30,27 @@ pub fn let_assert_fails() -> Nil {
 pub fn unimplemented() -> Nil {
   todo as "unimplemented function in code under test"
 }
+
+// Erlang-only fixtures for process-isolation tests. Invoked by name via
+// runner.run_in_process, never discovered (no _test suffix).
+
+@target(erlang)
+pub fn sleeps_forever() -> Nil {
+  sleep(60_000)
+}
+
+@target(erlang)
+pub fn crashes_linked() -> Nil {
+  spawn_link(fn() { panic as "crash in linked process" })
+  // Stay alive long enough to receive the exit signal.
+  sleep(1000)
+}
+
+@target(erlang)
+@external(erlang, "timer", "sleep")
+fn sleep(ms: Int) -> Nil
+
+// The pid is discarded, so the dishonest Nil return type is harmless here.
+@target(erlang)
+@external(erlang, "erlang", "spawn_link")
+fn spawn_link(f: fn() -> Nil) -> Nil

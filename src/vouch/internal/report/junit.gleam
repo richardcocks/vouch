@@ -120,6 +120,16 @@ fn test_case(r: Case) -> String {
       <> ">\n      <failure type=\"unknown\" message=\""
       <> escape(string.inspect(raw))
       <> "\"/>\n    </testcase>\n"
+    outcome.Failed(outcome.TimeoutDetail(ms)) ->
+      open
+      <> ">\n      <failure type=\"timeout\" message=\"timed out after "
+      <> int.to_string(ms)
+      <> "ms\"/>\n    </testcase>\n"
+    outcome.Failed(outcome.ExitDetail(raw)) ->
+      open
+      <> ">\n      <failure type=\"died\" message=\""
+      <> escape(string.inspect(raw))
+      <> "\"/>\n    </testcase>\n"
   }
 }
 

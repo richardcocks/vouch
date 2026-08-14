@@ -82,6 +82,14 @@ fn outcome_fields(out: TestOutcome) -> List(#(String, json.Value)) {
       #("kind", Str("unknown")),
       #("message", Str(string.inspect(raw))),
     ]
+    outcome.Failed(outcome.TimeoutDetail(ms)) -> [
+      #("kind", Str("timeout")),
+      #("timeout_ms", Num(ms)),
+    ]
+    outcome.Failed(outcome.ExitDetail(raw)) -> [
+      #("kind", Str("died")),
+      #("message", Str(string.inspect(raw))),
+    ]
   }
 }
 

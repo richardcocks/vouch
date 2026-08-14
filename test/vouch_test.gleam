@@ -78,7 +78,7 @@ pub fn decode_let_assert_test() {
 // --- Outcome classification ---
 
 pub fn classify_pass_test() {
-  assert outcome.classify("m", "t", Ok(Nil)) == outcome.Pass
+  assert outcome.classify("m", "t", outcome.Passed) == outcome.Pass
 }
 
 pub fn classify_skip_vs_todo_test() {
@@ -99,17 +99,51 @@ pub fn classify_skip_vs_todo_test() {
 }
 
 pub fn deep_todo_is_todo_outcome_test() {
-  let result = runner.catch_panic(helpers.unimplemented)
+  let invocation =
+    outcome.from_caught(runner.catch_panic(helpers.unimplemented))
   let out =
-    outcome.classify("vouch_test", "deep_todo_is_todo_outcome_test", result)
+    outcome.classify("vouch_test", "deep_todo_is_todo_outcome_test", invocation)
   let assert outcome.Todo(p) = out
   assert p.module == "helpers"
 }
 
 pub fn panic_is_failure_test() {
-  let result = runner.catch_panic(helpers.panics)
+  let invocation = outcome.from_caught(runner.catch_panic(helpers.panics))
   let assert outcome.Failed(outcome.PanicDetail(_)) =
-    outcome.classify("vouch_test", "panic_is_failure_test", result)
+    outcome.classify("vouch_test", "panic_is_failure_test", invocation)
+}
+
+pub fn timeout_classifies_as_failure_test() {
+  assert outcome.classify("m", "t", outcome.TimedOut(100))
+    == outcome.Failed(outcome.TimeoutDetail(100))
+}
+
+// --- Process isolation (Erlang target only) ---
+
+@target(erlang)
+pub fn hanging_test_times_out_test() {
+  let invocation = runner.run_in_process("helpers", "sleeps_forever", 100)
+  assert invocation == outcome.TimedOut(100)
+}
+
+@target(erlang)
+pub fn linked_crash_is_contained_test() {
+  let invocation = runner.run_in_process("helpers", "crashes_linked", 5000)
+  let assert outcome.Failed(outcome.PanicDetail(p)) =
+    outcome.classify("vouch_test", "linked_crash_is_contained_test", invocation)
+  assert p.message == "crash in linked process"
+}
+
+@target(erlang)
+pub fn isolated_pass_and_panic_test() {
+  // failing_result returns an Error value, which is still a *passing* test —
+  // only panics fail.
+  assert runner.run_in_process("helpers", "failing_result", 5000)
+    == outcome.Passed
+  let assert outcome.Panicked(raw) =
+    runner.run_in_process("helpers", "panics", 5000)
+  let assert Ok(p) = gleam_panic.from_dynamic(raw)
+  assert p.message == "helper panicked"
 }
 
 // --- Tally and exit codes ---
@@ -162,7 +196,12 @@ pub fn format_duration_test() {
 
 pub fn config_defaults_test() {
   assert config.from_args([])
-    == Ok(config.Config(format: config.Console, filter: None, junit: None))
+    == Ok(config.Config(
+      format: config.Console,
+      filter: None,
+      junit: None,
+      timeout_ms: config.default_timeout_ms,
+    ))
 }
 
 pub fn config_format_and_filter_test() {
@@ -171,18 +210,21 @@ pub fn config_format_and_filter_test() {
       format: config.Json,
       filter: Some("decode"),
       junit: None,
+      timeout_ms: config.default_timeout_ms,
     ))
-  assert config.from_args(["decode", "--junit=report.xml"])
+  assert config.from_args(["decode", "--junit=report.xml", "--timeout=250"])
     == Ok(config.Config(
       format: config.Console,
       filter: Some("decode"),
       junit: Some("report.xml"),
+      timeout_ms: 250,
     ))
 }
 
 pub fn config_rejects_bad_args_test() {
   let assert Error(_) = config.from_args(["--nope"])
   let assert Error(_) = config.from_args(["one", "two"])
+  let assert Error(_) = config.from_args(["--timeout=abc"])
 }
 
 // --- JSON encoding ---

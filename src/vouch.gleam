@@ -18,17 +18,19 @@ pub fn main() -> Nil {
     }
     Ok(cfg) ->
       case cfg.format, cfg.junit {
-        config.Console, None -> runner.run(console.reporter(), cfg.filter)
+        config.Console, None -> runner.run(console.reporter(), cfg.filter, cfg.timeout_ms)
         config.Console, Some(path) ->
           runner.run(
             reporter.pair(console.reporter(), junit.reporter(path)),
             cfg.filter,
+            cfg.timeout_ms,
           )
-        config.Json, None -> runner.run(jsonl.reporter(), cfg.filter)
+        config.Json, None -> runner.run(jsonl.reporter(), cfg.filter, cfg.timeout_ms)
         config.Json, Some(path) ->
           runner.run(
             reporter.pair(jsonl.reporter(), junit.reporter(path)),
             cfg.filter,
+            cfg.timeout_ms,
           )
       }
   }
