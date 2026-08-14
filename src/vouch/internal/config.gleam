@@ -51,7 +51,7 @@ fn parse(args: List(String), config: Config) -> Result(Config, String) {
         Error(Nil) ->
           Error(usage("--timeout expects milliseconds, got: " <> value))
       }
-    [arg, ..rest] ->
+    [arg, ..] ->
       case string.starts_with(arg, "-") {
         True -> Error(usage("unknown option: " <> arg))
         False ->

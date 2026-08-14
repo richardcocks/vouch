@@ -86,6 +86,7 @@ fn now_microseconds() -> Int
 
 @target(erlang)
 pub fn run(rep: Reporter(s), filter: Option(String), timeout_ms: Int) -> Nil {
+  redirect_diagnostics_to_stderr()
   let started = now_microseconds()
   let candidates =
     find_test_files()
@@ -126,6 +127,10 @@ pub fn run(rep: Reporter(s), filter: Option(String), timeout_ms: Int) -> Nil {
     })
   finish(rep, state, list.reverse(outcomes), now_microseconds() - started)
 }
+
+@target(erlang)
+@external(erlang, "vouch_ffi", "redirect_diagnostics_to_stderr")
+fn redirect_diagnostics_to_stderr() -> Nil
 
 @target(erlang)
 fn path_to_module(path: String) -> String {

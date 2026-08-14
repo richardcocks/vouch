@@ -6,6 +6,7 @@
     catch_panic/1,
     decode_panic/1,
     now_microseconds/0,
+    redirect_diagnostics_to_stderr/0,
     write_file/2,
     halt/1
 ]).
@@ -18,6 +19,24 @@ write_file(Path, Content) ->
 
 now_microseconds() ->
     erlang:monotonic_time(microsecond).
+
+%% Route BEAM diagnostics (e.g. crash reports from processes that tests
+%% spawned) to stderr, so stdout stays a clean stream for reporters. They
+%% remain visible in a terminal; they no longer corrupt piped output.
+%% logger_std_h does not honour a runtime `type` change, so the handler is
+%% removed and re-added with its filters and formatter preserved. Note the
+%% reports are asynchronous and can be lost entirely if the VM halts first.
+redirect_diagnostics_to_stderr() ->
+    catch case logger:get_handler_config(default) of
+        {ok, #{module := Module, config := HConfig} = Cfg} ->
+            NewCfg0 = Cfg#{config := HConfig#{type => standard_error}},
+            NewCfg = maps:remove(id, maps:remove(module, NewCfg0)),
+            logger:remove_handler(default),
+            logger:add_handler(default, Module, NewCfg);
+        _ ->
+            ok
+    end,
+    nil.
 
 %% Paths of .gleam files under test/, relative to test/.
 find_test_files() ->
