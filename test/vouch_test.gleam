@@ -134,6 +134,26 @@ pub fn linked_crash_is_contained_test() {
   assert p.message == "crash in linked process"
 }
 
+/// A todo inside an OTP process (here a real gen_server callback) reaches
+/// the caller wrapped in OTP exit structure. It must still classify as
+/// Todo, not an opaque failure.
+@target(erlang)
+pub fn otp_wrapped_todo_is_todo_outcome_test() {
+  let invocation = outcome.from_caught(runner.catch_panic(call_into_todo))
+  let assert outcome.Todo(p) =
+    outcome.classify(
+      "vouch_test",
+      "otp_wrapped_todo_is_todo_outcome_test",
+      invocation,
+    )
+  assert p.module == "helpers"
+  assert p.function == "unimplemented"
+}
+
+@target(erlang)
+@external(erlang, "vouch_otp_fixture", "call_into_todo")
+fn call_into_todo() -> Nil
+
 @target(erlang)
 pub fn isolated_pass_and_panic_test() {
   // failing_result returns an Error value, which is still a *passing* test —

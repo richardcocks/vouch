@@ -50,7 +50,11 @@ arrives in one of several shapes, all of which vouch must catch and decode:
 )
 
 Decoding is per-target FFI normalisation followed by pure-Gleam
-interpretation. The `assert` payload is what makes rich console diffs possible;
+interpretation. On Erlang the decoder searches nested exit-reason tuples
+recursively, because OTP wraps payloads: a panic inside a gen_server callback
+reaches the calling test as `{{Payload, Stacktrace}, {gen_server, call, ...}}`
+— a todo raised inside an OTP process must still classify as Todo, not as an
+opaque failure. The `assert` payload is what makes rich console diffs possible;
 `should.*` failures can only ever render as the string gleeunit formatted.
 Exact payload shapes, especially on JavaScript, are top of the verification
 list in @sec-open-questions.

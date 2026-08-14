@@ -76,7 +76,9 @@ run_test(ModuleName, FunctionName, TimeoutMs) ->
             erlang:demonitor(Ref, [flush]),
             {panicked, Reason};
         {'DOWN', Ref, process, Pid, Reason} ->
-            {died, normalize_exit_reason(Reason)}
+            %% decode_panic's recursive search handles {Reason, Stacktrace}
+            %% and OTP wrappers, so the reason is passed through raw.
+            {died, Reason}
     after TimeoutMs ->
         erlang:demonitor(Ref, [flush]),
         exit(Pid, kill),
@@ -87,10 +89,6 @@ run_test(ModuleName, FunctionName, TimeoutMs) ->
         {timed_out, TimeoutMs}
     end.
 
-%% Error exits carry {Reason, Stacktrace}; unwrap so a linked Gleam panic's
-%% payload map is decodable.
-normalize_exit_reason({Reason, Stack}) when is_list(Stack) -> Reason;
-normalize_exit_reason(Reason) -> Reason.
 
 %% Call a function, capturing anything it throws. The raw reason is returned
 %% for Gleam-side decoding; a Gleam panic's reason is a map tagged
@@ -105,16 +103,42 @@ catch_panic(F) ->
     end.
 
 %% Decode a raw error term into vouch's GleamPanic type, or error for
-%% anything that is not a Gleam panic. Tuple shapes must match the
-%% constructor definitions in src/vouch/internal/panic.gleam.
-decode_panic(#{
+%% anything that is not a Gleam panic. The panic map is searched for
+%% recursively through nested tuples, because OTP wraps exit reasons: a todo
+%% inside a gen_server callback reaches the caller as
+%% {{Map, Stacktrace}, {gen_server, call, [...]}}, a plain error exit as
+%% {Map, Stacktrace}, and vouch's own catch wrapper adds {Class, Reason}.
+%% Tuple shapes must match the constructor definitions in
+%% src/vouch/internal/gleam_panic.gleam.
+decode_panic(Term) ->
+    case find_panic(Term, 6) of
+        {ok, Map} -> panic_from_map(Map);
+        error -> {error, nil}
+    end.
+
+find_panic(#{gleam_error := _} = Map, _Depth) ->
+    {ok, Map};
+find_panic(Term, Depth) when is_tuple(Term), Depth > 0 ->
+    find_panic_in(tuple_to_list(Term), Depth - 1);
+find_panic(_, _) ->
+    error.
+
+find_panic_in([], _Depth) ->
+    error;
+find_panic_in([Head | Tail], Depth) ->
+    case find_panic(Head, Depth) of
+        {ok, Map} -> {ok, Map};
+        error -> find_panic_in(Tail, Depth)
+    end.
+
+panic_from_map(#{
     gleam_error := assert,
     start := Start,
     'end' := End,
     expression_start := EStart
 } = E) ->
     wrap(E, {assert, Start, End, EStart, assert_kind(E)});
-decode_panic(#{
+panic_from_map(#{
     gleam_error := let_assert,
     start := Start,
     'end' := End,
@@ -123,11 +147,11 @@ decode_panic(#{
     value := Value
 } = E) ->
     wrap(E, {let_assert, Start, End, PStart, PEnd, Value});
-decode_panic(#{gleam_error := panic} = E) ->
+panic_from_map(#{gleam_error := panic} = E) ->
     wrap(E, panic);
-decode_panic(#{gleam_error := todo} = E) ->
+panic_from_map(#{gleam_error := todo} = E) ->
     wrap(E, todo);
-decode_panic(_) ->
+panic_from_map(_) ->
     {error, nil}.
 
 assert_kind(#{kind := binary_operator, left := L, right := R, operator := O}) ->
