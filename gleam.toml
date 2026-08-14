@@ -1,7 +1,11 @@
 name = "vouch"
 version = "0.1.0"
-description = "A test runner for Gleam"
+description = "A gleeunit-compatible test runner with rich failures, todo outcomes, JSONL and JUnit output, and process isolation"
 licences = ["Apache-2.0"]
+gleam = ">= 1.11.0"
+
+# Uncomment once the repository is on GitHub:
+# repository = { type = "github", user = "", repo = "vouch" }
 
 [dependencies]
 gleam_stdlib = ">= 1.0.0 and < 2.0.0"
