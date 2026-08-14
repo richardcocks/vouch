@@ -18,10 +18,11 @@ pub fn main() -> Nil {
     }
     Ok(cfg) ->
       case cfg.format, cfg.junit {
-        config.Console, None -> runner.run(console.reporter(), cfg.filter, cfg.timeout_ms)
+        config.Console, None ->
+          runner.run(console.reporter(cfg.filter), cfg.filter, cfg.timeout_ms)
         config.Console, Some(path) ->
           runner.run(
-            reporter.pair(console.reporter(), junit.reporter(path)),
+            reporter.pair(console.reporter(cfg.filter), junit.reporter(path)),
             cfg.filter,
             cfg.timeout_ms,
           )

@@ -27,6 +27,7 @@ export function run_tests(state, should_run, on_begin, on_test_start, on_test_re
 async function run(state, should_run, on_begin, on_test_start, on_test_result, on_done) {
   const pkg = await readRootPackageName();
   const tests = [];
+  let discovered = 0;
   for (const path of await collectGleamFiles("test")) {
     const moduleName = path.slice("test/".length, -".gleam".length);
     if (!moduleName.endsWith("_test")) continue;
@@ -35,6 +36,7 @@ async function run(state, should_run, on_begin, on_test_start, on_test_result, o
       if (!name.endsWith("_test")) continue;
       const fn = module[name];
       if (typeof fn !== "function" || fn.length !== 0) continue;
+      discovered++;
       if (!should_run(moduleName, name)) continue;
       tests.push([moduleName, name, fn]);
     }
@@ -43,7 +45,7 @@ async function run(state, should_run, on_begin, on_test_start, on_test_result, o
     am < bm ? -1 : am > bm ? 1 : an < bn ? -1 : an > bn ? 1 : 0,
   );
 
-  state = on_begin(state, tests.length);
+  state = on_begin(state, tests.length, discovered);
   for (const [moduleName, name, fn] of tests) {
     state = on_test_start(state, moduleName, name);
     let outcome;

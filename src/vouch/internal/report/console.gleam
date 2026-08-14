@@ -5,6 +5,7 @@ import gleam/dict
 import gleam/int
 import gleam/io
 import gleam/list
+import gleam/option.{type Option, None, Some}
 import gleam/string
 import vouch/internal/event.{type Event, type Tally}
 import vouch/internal/gleam_panic.{type GleamPanic}
@@ -15,18 +16,34 @@ pub type State {
   State(
     failures: List(#(String, outcome.FailureDetail)),
     todos: List(#(String, GleamPanic)),
+    discovered: Int,
   )
 }
 
-pub fn reporter() -> Reporter(State) {
-  Reporter(init: State(failures: [], todos: []), handle: handle)
+pub fn reporter(filter: Option(String)) -> Reporter(State) {
+  Reporter(init: State(failures: [], todos: [], discovered: 0), handle: fn(
+    state,
+    e,
+  ) {
+    handle(filter, state, e)
+  })
 }
 
-fn handle(state: State, e: Event) -> State {
+fn handle(filter: Option(String), state: State, e: Event) -> State {
   case e {
-    event.RunStart(total) -> {
-      io.println("Running " <> int.to_string(total) <> " tests")
-      state
+    event.RunStart(total, discovered) -> {
+      case total == discovered {
+        True -> io.println("Running " <> int.to_string(total) <> " tests")
+        False ->
+          io.println(
+            "Running "
+            <> int.to_string(total)
+            <> " of "
+            <> int.to_string(discovered)
+            <> " tests",
+          )
+      }
+      State(..state, discovered: discovered)
     }
     event.TestStart(_, _) -> state
     event.TestResult(module, function, out, duration) -> {
@@ -42,7 +59,7 @@ fn handle(state: State, e: Event) -> State {
     event.RunEnd(tally, duration) -> {
       print_failures(list.reverse(state.failures))
       print_todos(list.reverse(state.todos))
-      print_summary(tally, duration)
+      print_summary(filter, state.discovered, tally, duration)
       state
     }
   }
@@ -140,13 +157,35 @@ fn print_todos(todos: List(#(String, GleamPanic))) -> Nil {
   }
 }
 
-fn print_summary(tally: Tally, duration: Int) -> Nil {
+fn print_summary(
+  filter: Option(String),
+  discovered: Int,
+  tally: Tally,
+  duration: Int,
+) -> Nil {
   io.println("")
   case tally.passed + tally.failed + tally.todos + tally.skipped {
     0 ->
-      io.println(
-        "No tests found! Expected *_test functions in *_test modules under test/.",
-      )
+      case discovered, filter {
+        0, _ ->
+          io.println(
+            "No tests found! Expected *_test functions in *_test modules under test/.",
+          )
+        _, Some(pattern) ->
+          io.println(
+            "No tests matched the filter \""
+            <> pattern
+            <> "\" — "
+            <> int.to_string(discovered)
+            <> " tests were discovered.",
+          )
+        _, None ->
+          io.println(
+            "No tests ran, but "
+            <> int.to_string(discovered)
+            <> " were discovered.",
+          )
+      }
     _ ->
       io.println(
         int.to_string(tally.passed)

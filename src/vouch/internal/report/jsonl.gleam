@@ -23,9 +23,10 @@ pub fn event_to_json(e: Event) -> String {
 
 fn fields(e: Event) -> List(#(String, json.Value)) {
   case e {
-    event.RunStart(total) -> [
+    event.RunStart(total, discovered) -> [
       #("event", Str("run_start")),
       #("total", Num(total)),
+      #("discovered", Num(discovered)),
     ]
     event.TestStart(module, function) -> [
       #("event", Str("test_start")),

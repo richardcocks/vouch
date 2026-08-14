@@ -5,7 +5,10 @@
 import vouch/internal/outcome.{type TestOutcome}
 
 pub type Event {
-  RunStart(total: Int)
+  /// total is the number of tests that will run; discovered is the count
+  /// before filtering, so reporters can tell "nothing exists" from
+  /// "nothing matched".
+  RunStart(total: Int, discovered: Int)
   TestStart(module: String, function: String)
   TestResult(
     module: String,

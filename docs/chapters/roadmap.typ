@@ -17,7 +17,7 @@ Tier 1 — definitional:
 
 Tier 2 — cheap because the architecture pays for them:
 
-+ Name filtering: `gleam test -- <pattern>`
++ Name filtering: `gleam test -- --filter=text`
 + JSONL event stream + JUnit XML reporters (schemas marked unstable)
 + Process-per-test isolation on the BEAM
 + Per-test timeouts (BEAM; best-effort on JavaScript)

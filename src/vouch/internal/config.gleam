@@ -38,6 +38,11 @@ fn parse(args: List(String), config: Config) -> Result(Config, String) {
     ["--format=console", ..rest] ->
       parse(rest, Config(..config, format: Console))
     ["--format=json", ..rest] -> parse(rest, Config(..config, format: Json))
+    ["--filter=" <> pattern, ..rest] ->
+      case config.filter {
+        None -> parse(rest, Config(..config, filter: Some(pattern)))
+        Some(_) -> Error(usage("only one --filter is supported"))
+      }
     ["--junit=" <> path, ..rest] ->
       parse(rest, Config(..config, junit: Some(path)))
     ["--timeout=" <> value, ..rest] ->
@@ -50,10 +55,13 @@ fn parse(args: List(String), config: Config) -> Result(Config, String) {
       case string.starts_with(arg, "-") {
         True -> Error(usage("unknown option: " <> arg))
         False ->
-          case config.filter {
-            None -> parse(rest, Config(..config, filter: Some(arg)))
-            Some(_) -> Error(usage("only one filter pattern is supported"))
-          }
+          Error(usage(
+            "unexpected argument: "
+            <> arg
+            <> " (did you mean --filter="
+            <> arg
+            <> "?)",
+          ))
       }
   }
 }
@@ -61,8 +69,8 @@ fn parse(args: List(String), config: Config) -> Result(Config, String) {
 fn usage(problem: String) -> String {
   "vouch: "
   <> problem
-  <> "\n\nUsage: gleam test -- [pattern] [--format=console|json] [--junit=path]\n"
-  <> "  pattern         run only tests whose module.function contains it\n"
+  <> "\n\nUsage: gleam test -- [options]\n"
+  <> "  --filter=text   run only tests whose module.function contains text\n"
   <> "  --format=json   emit a JSONL event stream instead of console output\n"
   <> "  --junit=path    also write a JUnit XML report to the given file\n"
   <> "  --timeout=ms    per-test timeout on the Erlang target (default 5000)"

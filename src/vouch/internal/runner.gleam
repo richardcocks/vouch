@@ -87,7 +87,7 @@ fn now_microseconds() -> Int
 @target(erlang)
 pub fn run(rep: Reporter(s), filter: Option(String), timeout_ms: Int) -> Nil {
   let started = now_microseconds()
-  let tests =
+  let candidates =
     find_test_files()
     |> list.map(path_to_module)
     |> list.filter(string.ends_with(_, "_test"))
@@ -96,6 +96,8 @@ pub fn run(rep: Reporter(s), filter: Option(String), timeout_ms: Int) -> Nil {
       |> list.filter(string.ends_with(_, "_test"))
       |> list.map(fn(function) { #(module, function) })
     })
+  let tests =
+    candidates
     |> list.filter(fn(t) { matches(filter, t.0, t.1) })
     |> list.sort(fn(a, b) {
       case string.compare(a.0, b.0) {
@@ -104,7 +106,11 @@ pub fn run(rep: Reporter(s), filter: Option(String), timeout_ms: Int) -> Nil {
       }
     })
 
-  let state = rep.handle(rep.init, event.RunStart(list.length(tests)))
+  let state =
+    rep.handle(
+      rep.init,
+      event.RunStart(list.length(tests), list.length(candidates)),
+    )
   let #(state, outcomes) =
     list.fold(tests, #(state, []), fn(acc, test_case) {
       let #(state, outcomes) = acc
@@ -159,9 +165,9 @@ pub fn run(rep: Reporter(s), filter: Option(String), _timeout_ms: Int) -> Nil {
   js_run_tests(
     #(rep.init, [], 0),
     fn(module, function) { matches(filter, module, function) },
-    fn(state, total) {
+    fn(state, total, discovered) {
       let #(st, outs, _) = state
-      #(rep.handle(st, event.RunStart(total)), outs, 0)
+      #(rep.handle(st, event.RunStart(total, discovered)), outs, 0)
     },
     fn(state, module, function) {
       let #(st, outs, _) = state
@@ -188,7 +194,8 @@ pub fn run(rep: Reporter(s), filter: Option(String), _timeout_ms: Int) -> Nil {
 fn js_run_tests(
   state: #(s, List(TestOutcome), Int),
   should_run: fn(String, String) -> Bool,
-  on_begin: fn(#(s, List(TestOutcome), Int), Int) -> #(s, List(TestOutcome), Int),
+  on_begin: fn(#(s, List(TestOutcome), Int), Int, Int) ->
+    #(s, List(TestOutcome), Int),
   on_test_start: fn(#(s, List(TestOutcome), Int), String, String) ->
     #(s, List(TestOutcome), Int),
   on_test_result: fn(#(s, List(TestOutcome), Int), String, String, Result(Nil, Dynamic)) ->

@@ -205,14 +205,18 @@ pub fn config_defaults_test() {
 }
 
 pub fn config_format_and_filter_test() {
-  assert config.from_args(["--format=json", "decode"])
+  assert config.from_args(["--format=json", "--filter=decode"])
     == Ok(config.Config(
       format: config.Json,
       filter: Some("decode"),
       junit: None,
       timeout_ms: config.default_timeout_ms,
     ))
-  assert config.from_args(["decode", "--junit=report.xml", "--timeout=250"])
+  assert config.from_args([
+      "--filter=decode",
+      "--junit=report.xml",
+      "--timeout=250",
+    ])
     == Ok(config.Config(
       format: config.Console,
       filter: Some("decode"),
@@ -223,8 +227,11 @@ pub fn config_format_and_filter_test() {
 
 pub fn config_rejects_bad_args_test() {
   let assert Error(_) = config.from_args(["--nope"])
-  let assert Error(_) = config.from_args(["one", "two"])
   let assert Error(_) = config.from_args(["--timeout=abc"])
+  let assert Error(_) = config.from_args(["--filter=a", "--filter=b"])
+  // Bare positional arguments are errors, pointing at --filter.
+  let assert Error(message) = config.from_args(["timeout=1"])
+  assert string.contains(message, "--filter=timeout=1")
 }
 
 // --- JSON encoding ---
@@ -239,8 +246,8 @@ pub fn json_object_test() {
 }
 
 pub fn jsonl_run_start_test() {
-  assert jsonl.event_to_json(event.RunStart(3))
-    == "{\"event\":\"run_start\",\"total\":3}"
+  assert jsonl.event_to_json(event.RunStart(3, 24))
+    == "{\"event\":\"run_start\",\"total\":3,\"discovered\":24}"
 }
 
 pub fn jsonl_test_result_test() {

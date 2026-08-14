@@ -14,9 +14,10 @@ A run that discovers *zero tests is a failure* (loud, non-zero exit). A typo'd
 suffix or a misconfigured target silently reporting success is worse than a
 false alarm.
 
-Name filtering: `gleam test -- <pattern>` runs only tests whose qualified name
-(`module.function`) contains the pattern. Substring match in v1; nothing
-fancier until someone needs it.
+Name filtering: `gleam test -- --filter=text` runs only tests whose qualified
+name (`module.function`) contains the text. Substring match in v1; nothing
+fancier until someone needs it. Bare positional arguments are rejected with a
+hint, so a mistyped flag cannot silently become a filter.
 
 == Failure is the panic channel
 
