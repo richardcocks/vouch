@@ -19,11 +19,11 @@ import {
   ExpressionKind$Unevaluated,
 } from "./vouch/internal/gleam_panic.mjs";
 
-export function run_tests(state, on_begin, on_test_start, on_test_result, on_done) {
-  run(state, on_begin, on_test_start, on_test_result, on_done);
+export function run_tests(state, should_run, on_begin, on_test_start, on_test_result, on_done) {
+  run(state, should_run, on_begin, on_test_start, on_test_result, on_done);
 }
 
-async function run(state, on_begin, on_test_start, on_test_result, on_done) {
+async function run(state, should_run, on_begin, on_test_start, on_test_result, on_done) {
   const pkg = await readRootPackageName();
   const tests = [];
   for (const path of await collectGleamFiles("test")) {
@@ -34,6 +34,7 @@ async function run(state, on_begin, on_test_start, on_test_result, on_done) {
       if (!name.endsWith("_test")) continue;
       const fn = module[name];
       if (typeof fn !== "function" || fn.length !== 0) continue;
+      if (!should_run(moduleName, name)) continue;
       tests.push([moduleName, name, fn]);
     }
   }

@@ -6,6 +6,7 @@
 //// which types the same compiler-emitted payloads.
 
 import gleam/dynamic
+import gleam/string
 
 pub type GleamPanic {
   GleamPanic(
@@ -54,3 +55,12 @@ pub type ExpressionKind {
 @external(erlang, "vouch_ffi", "decode_panic")
 @external(javascript, "../../vouch_ffi.mjs", "decode_panic")
 pub fn from_dynamic(raw: dynamic.Dynamic) -> Result(GleamPanic, Nil)
+
+/// Human-readable value of an asserted subexpression.
+pub fn describe_expression(e: AssertedExpression) -> String {
+  case e.kind {
+    Literal(v) -> string.inspect(v)
+    Expression(v) -> string.inspect(v)
+    Unevaluated -> "(not evaluated)"
+  }
+}

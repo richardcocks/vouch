@@ -4,12 +4,16 @@
 //// and the exit-code rules on both targets.
 
 import gleam/list
+import gleam/option.{None, Some}
 import helpers
 import vouch
+import vouch/internal/config
 import vouch/internal/event
 import vouch/internal/gleam_panic
+import vouch/internal/json
 import vouch/internal/outcome
 import vouch/internal/report/console
+import vouch/internal/report/jsonl
 import vouch/internal/runner
 
 pub fn main() -> Nil {
@@ -150,4 +154,54 @@ pub fn format_duration_test() {
   assert console.format_duration(1500) == "1.5ms"
   assert console.format_duration(999_999) == "999.9ms"
   assert console.format_duration(2_500_000) == "2.5s"
+}
+
+// --- Config ---
+
+pub fn config_defaults_test() {
+  assert config.from_args([])
+    == Ok(config.Config(format: config.Console, filter: None))
+}
+
+pub fn config_format_and_filter_test() {
+  assert config.from_args(["--format=json", "decode"])
+    == Ok(config.Config(format: config.Json, filter: Some("decode")))
+  assert config.from_args(["decode"])
+    == Ok(config.Config(format: config.Console, filter: Some("decode")))
+}
+
+pub fn config_rejects_bad_args_test() {
+  let assert Error(_) = config.from_args(["--nope"])
+  let assert Error(_) = config.from_args(["one", "two"])
+}
+
+// --- JSON encoding ---
+
+pub fn json_escaping_test() {
+  assert json.render(json.Str("a\"b\\c\nd")) == "\"a\\\"b\\\\c\\nd\""
+}
+
+pub fn json_object_test() {
+  assert json.render(json.Obj([#("a", json.Num(1)), #("b", json.Str("x"))]))
+    == "{\"a\":1,\"b\":\"x\"}"
+}
+
+pub fn jsonl_run_start_test() {
+  assert jsonl.event_to_json(event.RunStart(3))
+    == "{\"event\":\"run_start\",\"total\":3}"
+}
+
+pub fn jsonl_test_result_test() {
+  assert jsonl.event_to_json(event.TestResult("m", "f", outcome.Pass, 1500))
+    == "{\"event\":\"test_result\",\"module\":\"m\",\"function\":\"f\","
+    <> "\"outcome\":\"pass\",\"duration_us\":1500}"
+}
+
+pub fn jsonl_todo_result_test() {
+  let p = sample_todo_panic()
+  assert jsonl.event_to_json(event.TestResult("m", "f", outcome.Todo(p), 10))
+    == "{\"event\":\"test_result\",\"module\":\"m\",\"function\":\"f\","
+    <> "\"outcome\":\"todo\",\"duration_us\":10,\"message\":\"m\","
+    <> "\"site_module\":\"some_module\",\"site_function\":\"some_function\","
+    <> "\"site_line\":1}"
 }

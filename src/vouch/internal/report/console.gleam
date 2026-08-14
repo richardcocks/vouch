@@ -110,11 +110,7 @@ fn print_panic_detail(p: GleamPanic) -> Nil {
 }
 
 fn expression_value(e: gleam_panic.AssertedExpression) -> String {
-  case e.kind {
-    gleam_panic.Literal(v) -> string.inspect(v)
-    gleam_panic.Expression(v) -> string.inspect(v)
-    gleam_panic.Unevaluated -> "(not evaluated)"
-  }
+  gleam_panic.describe_expression(e)
 }
 
 fn print_todos(todos: List(#(String, GleamPanic))) -> Nil {

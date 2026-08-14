@@ -3,6 +3,7 @@
 
 import gleam/dynamic.{type Dynamic}
 import gleam/list
+import gleam/option.{type Option}
 import gleam/order
 import gleam/string
 import vouch/internal/event.{type Tally, Tally}
@@ -46,6 +47,14 @@ pub fn exit_code(t: Tally) -> Int {
   }
 }
 
+fn matches(filter: Option(String), module: String, function: String) -> Bool {
+  case filter {
+    option.None -> True
+    option.Some(pattern) ->
+      string.contains(module <> "." <> function, pattern)
+  }
+}
+
 fn finish(
   rep: Reporter(s),
   state: s,
@@ -76,7 +85,7 @@ fn now_microseconds() -> Int
 // whole loop is Gleam.
 
 @target(erlang)
-pub fn run(rep: Reporter(s)) -> Nil {
+pub fn run(rep: Reporter(s), filter: Option(String)) -> Nil {
   let started = now_microseconds()
   let tests =
     find_test_files()
@@ -87,6 +96,7 @@ pub fn run(rep: Reporter(s)) -> Nil {
       |> list.filter(string.ends_with(_, "_test"))
       |> list.map(fn(function) { #(module, function) })
     })
+    |> list.filter(fn(t) { matches(filter, t.0, t.1) })
     |> list.sort(fn(a, b) {
       case string.compare(a.0, b.0) {
         order.Eq -> string.compare(a.1, b.1)
@@ -136,10 +146,11 @@ fn run_test(module: String, function: String) -> Result(Nil, Dynamic)
 // of the test in flight).
 
 @target(javascript)
-pub fn run(rep: Reporter(s)) -> Nil {
+pub fn run(rep: Reporter(s), filter: Option(String)) -> Nil {
   let started = now_microseconds()
   js_run_tests(
     #(rep.init, [], 0),
+    fn(module, function) { matches(filter, module, function) },
     fn(state, total) {
       let #(st, outs, _) = state
       #(rep.handle(st, event.RunStart(total)), outs, 0)
@@ -168,6 +179,7 @@ pub fn run(rep: Reporter(s)) -> Nil {
 @external(javascript, "../../vouch_ffi.mjs", "run_tests")
 fn js_run_tests(
   state: #(s, List(TestOutcome), Int),
+  should_run: fn(String, String) -> Bool,
   on_begin: fn(#(s, List(TestOutcome), Int), Int) -> #(s, List(TestOutcome), Int),
   on_test_start: fn(#(s, List(TestOutcome), Int), String, String) ->
     #(s, List(TestOutcome), Int),
