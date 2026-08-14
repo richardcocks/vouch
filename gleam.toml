@@ -2,10 +2,17 @@ name = "vouch"
 version = "0.1.0"
 description = "A gleeunit-compatible test runner with rich failures, todo outcomes, JSONL and JUnit output, and process isolation"
 licences = ["Apache-2.0"]
-gleam = ">= 1.11.0"
+# Verified floor (podman, v1.14.0 images, both targets): the assert keyword
+# needs >= 1.11, but gleam_stdlib 1.x already requires >= 1.14, and vouch's
+# JS prelude imports are confirmed working there.
+gleam = ">= 1.14.0"
 
 # Uncomment once the repository is on GitHub:
 # repository = { type = "github", user = "", repo = "vouch" }
+
+[javascript.deno]
+allow_read = ["gleam.toml", "test", "build"]
+allow_env = ["NO_COLOR"]
 
 [dependencies]
 gleam_stdlib = ">= 1.0.0 and < 2.0.0"
