@@ -52,8 +52,9 @@ what was verified (and how), plus the genuinely still-open items at the end.
   1.14–1.18. The suite's permanently-skipped todo-bodied test doubles as a
   canary: if a compiler change breaks site decoding, the degradation rule
   flips it to Todo and the suite goes red on upgrade.
-+ *Whether `gleam dev` exists / where watch mode lives* — deferred with
-  watch mode itself (v2).
++ *Whether the toolchain grows a `gleam dev` entry point* — watch mode
+  shipped under `gleam run -m vouch -- watch`; revisit the spelling only
+  if upstream offers a better home.
 + *showtime / startest current state* — worth a look at startest's
   filtering UX before extending vouch's flags.
 + *JavaScript sequencing in Gleam* — evaluate promise bindings (likely

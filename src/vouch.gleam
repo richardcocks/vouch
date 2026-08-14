@@ -10,9 +10,17 @@ import vouch/internal/report/junit
 import vouch/internal/reporter
 import vouch/internal/runner
 import vouch/internal/term
+import vouch/internal/watch
 
 pub fn main() -> Nil {
-  case config.from_args(argv.load().arguments) {
+  case argv.load().arguments {
+    ["watch", ..rest] -> watch.run(rest)
+    args -> run_tests(args)
+  }
+}
+
+fn run_tests(args: List(String)) -> Nil {
+  case config.from_args(args) {
     Error(message) -> {
       io.println(message)
       runner.halt(2)

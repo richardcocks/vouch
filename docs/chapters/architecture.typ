@@ -155,7 +155,8 @@ buffers until `RunEnd`. See @sec-output.
 == CLI growth path
 
 `gleam run -m vouch` can execute a module's main from a dependency (the pattern
-lustre_dev_tools uses). Watch mode and any future scaffolding commands live
-there, without changing the distribution model. The core stays a library.
-See @sec-roadmap for the watch mode sketch and why it must re-exec
-`gleam test` rather than re-run in-process.
+lustre_dev_tools uses). Watch mode lives there — `gleam run -m vouch -- watch`
+— and any future scaffolding commands follow, without changing the
+distribution model. The core stays a library. See @sec-roadmap for the
+as-built watch loop and why it must re-exec `gleam test` rather than re-run
+in-process.

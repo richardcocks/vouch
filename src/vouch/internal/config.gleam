@@ -86,5 +86,8 @@ fn usage(problem: String) -> String {
   <> "  --junit=path    also write a JUnit XML report to the given file\n"
   <> "  --timeout=ms    per-test timeout on the Erlang target (default 5000)\n"
   <> "  --color=mode    console colour: auto (default), always, never;\n"
-  <> "                  auto respects NO_COLOR and non-TTY output"
+  <> "                  auto respects NO_COLOR and non-TTY output\n"
+  <> "\n"
+  <> "Watch mode (rerun on file change):\n"
+  <> "  gleam run -m vouch -- watch [options] [--target=erlang|javascript]"
 }

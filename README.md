@@ -59,7 +59,18 @@ gleam test -- --format=json             # JSONL event stream on stdout
 gleam test -- --junit=report.xml        # also write JUnit XML for CI
 gleam test -- --timeout=1000            # per-test timeout in ms (Erlang target)
 gleam test -- --color=never             # console colour: auto | always | never
+gleam run -m vouch -- watch             # rerun the suite on file change
 ```
+
+### Watch mode
+
+`gleam run -m vouch -- watch [options]` reruns the suite whenever `src/`,
+`test/`, or `gleam.toml` changes. Options after `watch` pass through to
+each inner run (`--filter=…`, `--timeout=…`, …); `--target=javascript`
+watches your JavaScript-target tests. The watcher itself is a BEAM
+program that re-invokes `gleam test` per cycle, so each rerun includes the
+toolchain's incremental compile check — a compile error shows up in the
+loop like any other red result, and the watcher keeps waiting for the fix.
 
 ## Outcomes
 

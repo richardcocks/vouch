@@ -10,7 +10,10 @@
     env/1,
     redirect_diagnostics_to_stderr/0,
     write_file/2,
-    halt/1
+    halt/1,
+    file_snapshot/1,
+    run_passthrough/2,
+    sleep_ms/1
 ]).
 
 write_file(Path, Content) ->
@@ -194,6 +197,73 @@ wrap(#{
 halt(Code) ->
     erlang:halt(Code),
     nil.
+
+%% Watch-mode primitives. One row per file under the given roots (a root may
+%% be a file or a directory, searched recursively): path, mtime in gregorian
+%% seconds, size in bytes. Sorted so two snapshots of an unchanged tree
+%% compare equal regardless of traversal order.
+file_snapshot(Roots) ->
+    lists:sort(lists:flatmap(fun snapshot_root/1, Roots)).
+
+snapshot_root(Root) ->
+    Path = unicode:characters_to_list(Root),
+    case filelib:is_dir(Path) of
+        true ->
+            filelib:fold_files(Path, ".*", true, fun(File, Acc) ->
+                [snapshot_entry(File) | Acc]
+            end, []);
+        false ->
+            case filelib:is_regular(Path) of
+                true -> [snapshot_entry(Path)];
+                false -> []
+            end
+    end.
+
+snapshot_entry(Path) ->
+    Seconds = case filelib:last_modified(Path) of
+        0 -> 0;
+        DateTime -> calendar:datetime_to_gregorian_seconds(DateTime)
+    end,
+    {unicode:characters_to_binary(Path), Seconds, filelib:file_size(Path)}.
+
+%% Spawn a command with its stdout streamed through to ours as chunks
+%% arrive; stderr is inherited by the child directly, so build-tool
+%% diagnostics keep their usual destination. Returns the exit code.
+run_passthrough(Command, Args) ->
+    case os:find_executable(unicode:characters_to_list(Command)) of
+        false ->
+            {error, nil};
+        Exe ->
+            Port = open_port({spawn_executable, Exe}, [
+                {args, [unicode:characters_to_list(A) || A <- Args]},
+                exit_status,
+                binary,
+                hide
+            ]),
+            stream_through(Port)
+    end.
+
+stream_through(Port) ->
+    receive
+        {Port, {data, Data}} ->
+            io:put_chars(Data),
+            stream_through(Port);
+        {Port, {exit_status, Code}} ->
+            drain_through(Port),
+            {ok, Code}
+    end.
+
+drain_through(Port) ->
+    receive
+        {Port, {data, Data}} ->
+            io:put_chars(Data),
+            drain_through(Port)
+    after 0 ->
+        ok
+    end.
+
+sleep_ms(Ms) ->
+    receive after Ms -> nil end.
 
 beam_name(ModuleName) ->
     binary:replace(ModuleName, <<"/">>, <<"@">>, [global]).

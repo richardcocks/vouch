@@ -29,8 +29,6 @@ by real use during development.
 
 == Deferred, deliberately
 
-- *Watch mode* — see the sketch below. Interim answer for users:
-  `watchexec -e gleam gleam test`.
 - *Tags, focus, fixtures, setup/teardown, parametrized tests* — all need a
   channel beyond the zero-arity convention (return type, registration API,
   or DSL). This is the central v2 design question; candidate directions
@@ -52,33 +50,50 @@ by real use during development.
 - *Snapshot testing, TAP output* — v2+ if demanded.
 - *EUnit `.erl` compat* — never; see @sec-compatibility.
 
-== Watch mode sketch (v2)
+== Watch mode (shipped post-v1)
+
+Shipped as `gleam run -m vouch -- watch [options]` — the lustre_dev_tools
+pattern: the watcher is honestly a separate program, hosted on the BEAM.
+Dispatch is on the first positional argument, so `gleam test -- watch`
+reaches the same loop; a `--target=javascript` argument is hoisted to the
+build tool's side of the inner invocation, so JavaScript suites are
+watched from the Erlang-hosted supervisor (on the JavaScript target,
+`watch` says it is unsupported and points at that spelling).
 
 `gleam test --watch` literally cannot exist without upstream toolchain
 changes — flags before `--` belong to the build tool. More fundamentally,
 `gleam test` is compile-then-execute: by the time runner code executes,
 compilation already happened, and neither the compiler nor BEAM hot-reload
-is callable from inside the running test process. A watcher therefore must
-live outside the compile step and re-invoke the toolchain:
+is callable from inside the running test process. The watcher therefore
+lives outside the compile step and re-invokes the toolchain:
 
 ```text
 watcher process (long-lived)
-  └─ on change → spawn `gleam test` subprocess → parse its JSONL → report → wait
+  └─ on change → spawn `gleam test` subprocess → stream its output → wait
 ```
 
-Two spellings for the same loop, not mutually exclusive:
+Decisions recorded from the build:
 
-+ `gleam run -m vouch watch` — the lustre_dev_tools pattern; the watcher is
-  honestly a separate program. Preferred. (If the toolchain's `gleam dev`
-  entry point is a better home, decide when building it.)
-+ `gleam test -- --watch` — vouch's main detects the flag and becomes the
-  supervisor, spawning inner `gleam test` runs with the flag stripped.
-
-Implementation notes recorded from planning: poll mtimes rather than fight
-native file-watching APIs (OTP has no built-in watcher; `fs.watch` quirks on
-JavaScript are why chokidar exists) — polling every few hundred milliseconds
-is fine for this. Each cycle pays full `gleam test` startup (compile check +
-VM boot); Gleam's incremental compilation keeps it tolerable, but
-Vitest-style instant re-runs are not achievable from outside the toolchain.
-The watcher consumes vouch's own JSONL output from the inner run — the e2e
-tests already parse that stream the same way.
+- Polling, not native file watching (OTP has no built-in watcher;
+  `fs.watch` quirks on JavaScript are why chokidar exists). Every 250ms
+  the watched roots — `gleam.toml`, `src/`, `test/` — are snapshotted as
+  sorted (path, mtime, size) rows; size participates so a same-second
+  rewrite still registers despite mtime's one-second granularity. The
+  snapshot is taken *before* each run, so edits made while tests execute
+  trigger the next cycle.
+- One deviation from the planning sketch, which had the watcher parsing
+  the inner run's JSONL: the watcher instead streams the inner run's own
+  console output through untouched, pinning `--color=always` when the
+  watcher's terminal renders colour (the inner process only sees a pipe,
+  so its auto-detection would strip it). Re-rendering from JSONL would
+  duplicate the console reporter for no benefit today; it becomes worth
+  it when the watcher needs semantic knowledge of results — rerun-only-
+  failures, notifications — none of which exists yet.
+- Passthrough flags are validated once at startup with the same parser
+  the inner run uses, so a typo fails loudly before the loop starts
+  instead of on every cycle.
+- Each cycle pays full `gleam test` startup (compile check + VM boot);
+  Gleam's incremental compilation keeps it tolerable, but Vitest-style
+  instant re-runs are not achievable from outside the toolchain. A
+  compile error is just a red cycle: the inner run exits non-zero with
+  the compiler's diagnostics on stderr, and the watcher keeps waiting.
