@@ -1,0 +1,12 @@
+name = "playground"
+version = "0.0.1"
+
+# A scratch consumer of vouch: a place to run the runner against slow,
+# failing, todo-ing, and crashing tests that vouch's own (green) suite
+# cannot contain. Expect a red exit code here — that is the point.
+
+[dependencies]
+gleam_stdlib = ">= 1.0.0 and < 2.0.0"
+
+[dev_dependencies]
+vouch = { path = "../.." }
