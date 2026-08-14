@@ -55,16 +55,20 @@ pub fn decode_todo_test() {
 pub fn decode_assert_binop_test() {
   let assert Error(raw) = runner.catch_panic(helpers.assert_fails)
   let assert Ok(p) = gleam_panic.from_dynamic(raw)
-  let assert gleam_panic.Assert(kind: gleam_panic.BinaryOperator(operator: op, ..), ..) =
-    p.kind
+  let assert gleam_panic.Assert(
+    kind: gleam_panic.BinaryOperator(operator: op, ..),
+    ..,
+  ) = p.kind
   assert op == "=="
 }
 
 pub fn decode_assert_call_test() {
   let assert Error(raw) = runner.catch_panic(helpers.assert_call_fails)
   let assert Ok(p) = gleam_panic.from_dynamic(raw)
-  let assert gleam_panic.Assert(kind: gleam_panic.FunctionCall(arguments: args), ..) =
-    p.kind
+  let assert gleam_panic.Assert(
+    kind: gleam_panic.FunctionCall(arguments: args),
+    ..,
+  ) = p.kind
   assert list.length(args) == 1
 }
 
@@ -91,11 +95,9 @@ pub fn classify_skip_vs_todo_test() {
       line: 1,
       kind: gleam_panic.Todo,
     )
-  assert outcome.classify_panic("my_test", "some_test", p)
-    == outcome.Skipped(p)
+  assert outcome.classify_panic("my_test", "some_test", p) == outcome.Skipped(p)
   assert outcome.classify_panic("my_test", "other_test", p) == outcome.Todo(p)
-  assert outcome.classify_panic("other_test", "some_test", p)
-    == outcome.Todo(p)
+  assert outcome.classify_panic("other_test", "some_test", p) == outcome.Todo(p)
 }
 
 pub fn deep_todo_is_todo_outcome_test() {
@@ -134,10 +136,10 @@ pub fn linked_crash_is_contained_test() {
   assert p.message == "crash in linked process"
 }
 
+@target(erlang)
 /// A todo inside an OTP process (here a real gen_server callback) reaches
 /// the caller wrapped in OTP exit structure. It must still classify as
 /// Todo, not an opaque failure.
-@target(erlang)
 pub fn otp_wrapped_todo_is_todo_outcome_test() {
   let invocation = outcome.from_caught(runner.catch_panic(call_into_todo))
   let assert outcome.Todo(p) =
@@ -296,9 +298,18 @@ pub fn junit_render_test() {
     #("mod_b_test", "blocked_test", outcome.Todo(p), 2000),
   ]
   let xml = junit.render(results, 10_000)
-  assert string.contains(xml, "<testsuites tests=\"3\" failures=\"1\" skipped=\"1\" time=\"0.010\">")
-  assert string.contains(xml, "<testsuite name=\"mod_a_test\" tests=\"2\" failures=\"0\" skipped=\"1\"")
-  assert string.contains(xml, "<testcase name=\"ok_test\" classname=\"mod_a_test\" time=\"0.001\"/>")
+  assert string.contains(
+    xml,
+    "<testsuites tests=\"3\" failures=\"1\" skipped=\"1\" time=\"0.010\">",
+  )
+  assert string.contains(
+    xml,
+    "<testsuite name=\"mod_a_test\" tests=\"2\" failures=\"0\" skipped=\"1\"",
+  )
+  assert string.contains(
+    xml,
+    "<testcase name=\"ok_test\" classname=\"mod_a_test\" time=\"0.001\"/>",
+  )
   assert string.contains(xml, "<skipped message=\"m\"/>")
   assert string.contains(
     xml,

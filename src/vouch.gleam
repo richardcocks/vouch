@@ -35,7 +35,8 @@ pub fn main() -> Nil {
             cfg.filter,
             cfg.timeout_ms,
           )
-        config.Json, None -> runner.run(jsonl.reporter(), cfg.filter, cfg.timeout_ms)
+        config.Json, None ->
+          runner.run(jsonl.reporter(), cfg.filter, cfg.timeout_ms)
         config.Json, Some(path) ->
           runner.run(
             reporter.pair(jsonl.reporter(), junit.reporter(path)),

@@ -21,12 +21,10 @@ pub type State {
 }
 
 pub fn reporter(filter: Option(String), color: Bool) -> Reporter(State) {
-  Reporter(init: State(failures: [], todos: [], discovered: 0), handle: fn(
-    state,
-    e,
-  ) {
-    handle(Style(filter, color), state, e)
-  })
+  Reporter(
+    init: State(failures: [], todos: [], discovered: 0),
+    handle: fn(state, e) { handle(Style(filter, color), state, e) },
+  )
 }
 
 type Style {
@@ -175,9 +173,7 @@ fn print_todos(style: Style, todos: List(#(String, GleamPanic))) -> Nil {
           [#(_, p), ..] -> " — \"" <> p.message <> "\""
           [] -> ""
         }
-        io.println(
-          "  todo at " <> site_name <> message <> " (" <> count <> ")",
-        )
+        io.println("  todo at " <> site_name <> message <> " (" <> count <> ")")
       })
     }
   }
@@ -270,10 +266,7 @@ pub fn format_duration(microseconds: Int) -> String {
       <> "ms"
     False -> {
       let tenths_s = tenths_ms / 1000
-      int.to_string(tenths_s / 10)
-      <> "."
-      <> int.to_string(tenths_s % 10)
-      <> "s"
+      int.to_string(tenths_s / 10) <> "." <> int.to_string(tenths_s % 10) <> "s"
     }
   }
 }

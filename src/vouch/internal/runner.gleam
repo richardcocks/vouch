@@ -52,8 +52,7 @@ pub fn exit_code(t: Tally) -> Int {
 fn matches(filter: Option(String), module: String, function: String) -> Bool {
   case filter {
     option.None -> True
-    option.Some(pattern) ->
-      string.contains(module <> "." <> function, pattern)
+    option.Some(pattern) -> string.contains(module <> "." <> function, pattern)
   }
 }
 
@@ -149,9 +148,9 @@ fn find_test_files() -> List(String)
 @external(erlang, "vouch_ffi", "exported_zero_arity")
 fn exported_zero_arity(module: String) -> List(String)
 
+@target(erlang)
 /// Run one exported zero-arity function in its own monitored process with a
 /// timeout. Public so vouch's own suite can exercise isolation directly.
-@target(erlang)
 @external(erlang, "vouch_ffi", "run_test")
 pub fn run_in_process(
   module: String,
@@ -193,8 +192,7 @@ pub fn run(rep: Reporter(s), filter: Option(String), timeout_ms: Int) -> Nil {
       let #(st, outs, test_started) = state
       let duration = now_microseconds() - test_started
       let out = outcome.classify(module, function, outcome.from_caught(raw))
-      let st =
-        rep.handle(st, event.TestResult(module, function, out, duration))
+      let st = rep.handle(st, event.TestResult(module, function, out, duration))
       #(st, [out, ..outs], 0)
     },
     fn(state) {
@@ -213,7 +211,11 @@ fn js_run_tests(
     #(s, List(TestOutcome), Int),
   on_test_start: fn(#(s, List(TestOutcome), Int), String, String) ->
     #(s, List(TestOutcome), Int),
-  on_test_result: fn(#(s, List(TestOutcome), Int), String, String, Result(Nil, Dynamic)) ->
+  on_test_result: fn(
     #(s, List(TestOutcome), Int),
+    String,
+    String,
+    Result(Nil, Dynamic),
+  ) -> #(s, List(TestOutcome), Int),
   on_done: fn(#(s, List(TestOutcome), Int)) -> Nil,
 ) -> Nil
