@@ -6,6 +6,10 @@ pub fn is_even(n: Int) -> Bool {
   n % 2 == 0
 }
 
+pub fn failing_result() -> Result(Nil, String) {
+  Error("nope")
+}
+
 pub fn unimplemented() -> Nil {
   todo as "unimplemented function in code under test"
 }

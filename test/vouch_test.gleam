@@ -24,7 +24,7 @@ pub fn assert_call_test() {
 }
 
 pub fn let_assert_test() {
-  let assert Ok(_) = Error("nope")
+  let assert Ok(_) = helpers.failing_result()
 }
 
 pub fn panic_test() {

@@ -2,3 +2,5 @@
 docs/html/
 build/
 erl_crash.dump
+
+.claude/
