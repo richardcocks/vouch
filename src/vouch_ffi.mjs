@@ -3,6 +3,7 @@
 // decisions (what counts as a test, reporting, exit codes) belong to Gleam.
 // TODO: the *_test suffix checks are duplicated here so non-test modules are
 // never imported; unify once the discovery/execution contract settles.
+import { writeFileSync } from "node:fs";
 import { Result$Ok, Result$Error, List$Empty, List$NonEmpty } from "./gleam.mjs";
 import {
   GleamPanic$GleamPanic,
@@ -59,6 +60,15 @@ async function run(state, should_run, on_begin, on_test_start, on_test_result, o
 
 export function now_microseconds() {
   return Math.round(performance.now() * 1000);
+}
+
+export function write_file(path, content) {
+  try {
+    writeFileSync(path, content);
+    return Result$Ok(undefined);
+  } catch (error) {
+    return Result$Error(String(error?.message ?? error));
+  }
 }
 
 // Synchronous invocation for callers that already hold the function value.

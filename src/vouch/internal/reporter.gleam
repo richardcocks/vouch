@@ -7,3 +7,10 @@ import vouch/internal/event.{type Event}
 pub type Reporter(state) {
   Reporter(init: state, handle: fn(state, Event) -> state)
 }
+
+/// Run two reporters over the same event stream.
+pub fn pair(a: Reporter(x), b: Reporter(y)) -> Reporter(#(x, y)) {
+  Reporter(init: #(a.init, b.init), handle: fn(state, e) {
+    #(a.handle(state.0, e), b.handle(state.1, e))
+  })
+}

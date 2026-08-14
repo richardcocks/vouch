@@ -5,6 +5,7 @@
 
 import gleam/list
 import gleam/option.{None, Some}
+import gleam/string
 import helpers
 import vouch
 import vouch/internal/config
@@ -14,6 +15,7 @@ import vouch/internal/json
 import vouch/internal/outcome
 import vouch/internal/report/console
 import vouch/internal/report/jsonl
+import vouch/internal/report/junit
 import vouch/internal/runner
 
 pub fn main() -> Nil {
@@ -160,14 +162,22 @@ pub fn format_duration_test() {
 
 pub fn config_defaults_test() {
   assert config.from_args([])
-    == Ok(config.Config(format: config.Console, filter: None))
+    == Ok(config.Config(format: config.Console, filter: None, junit: None))
 }
 
 pub fn config_format_and_filter_test() {
   assert config.from_args(["--format=json", "decode"])
-    == Ok(config.Config(format: config.Json, filter: Some("decode")))
-  assert config.from_args(["decode"])
-    == Ok(config.Config(format: config.Console, filter: Some("decode")))
+    == Ok(config.Config(
+      format: config.Json,
+      filter: Some("decode"),
+      junit: None,
+    ))
+  assert config.from_args(["decode", "--junit=report.xml"])
+    == Ok(config.Config(
+      format: config.Console,
+      filter: Some("decode"),
+      junit: Some("report.xml"),
+    ))
 }
 
 pub fn config_rejects_bad_args_test() {
@@ -195,6 +205,41 @@ pub fn jsonl_test_result_test() {
   assert jsonl.event_to_json(event.TestResult("m", "f", outcome.Pass, 1500))
     == "{\"event\":\"test_result\",\"module\":\"m\",\"function\":\"f\","
     <> "\"outcome\":\"pass\",\"duration_us\":1500}"
+}
+
+pub fn junit_render_test() {
+  let p = sample_todo_panic()
+  let results = [
+    #("mod_a_test", "ok_test", outcome.Pass, 1000),
+    #("mod_a_test", "stub_test", outcome.Skipped(p), 500),
+    #("mod_b_test", "blocked_test", outcome.Todo(p), 2000),
+  ]
+  let xml = junit.render(results, 10_000)
+  assert string.contains(xml, "<testsuites tests=\"3\" failures=\"1\" skipped=\"1\" time=\"0.010\">")
+  assert string.contains(xml, "<testsuite name=\"mod_a_test\" tests=\"2\" failures=\"0\" skipped=\"1\"")
+  assert string.contains(xml, "<testcase name=\"ok_test\" classname=\"mod_a_test\" time=\"0.001\"/>")
+  assert string.contains(xml, "<skipped message=\"m\"/>")
+  assert string.contains(
+    xml,
+    "<failure type=\"todo\" message=\"blocked on todo at some_module.some_function:1\">m</failure>",
+  )
+}
+
+pub fn junit_escapes_xml_test() {
+  let p =
+    gleam_panic.GleamPanic(
+      message: "a < b & \"c\"",
+      file: "f",
+      module: "m",
+      function: "f",
+      line: 1,
+      kind: gleam_panic.Panic,
+    )
+  let results = [
+    #("m_test", "x_test", outcome.Failed(outcome.PanicDetail(p)), 0),
+  ]
+  let xml = junit.render(results, 0)
+  assert string.contains(xml, "message=\"a &lt; b &amp; &quot;c&quot;\"")
 }
 
 pub fn jsonl_todo_result_test() {

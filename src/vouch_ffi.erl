@@ -6,8 +6,15 @@
     catch_panic/1,
     decode_panic/1,
     now_microseconds/0,
+    write_file/2,
     halt/1
 ]).
+
+write_file(Path, Content) ->
+    case file:write_file(unicode:characters_to_list(Path), Content) of
+        ok -> {ok, nil};
+        {error, Reason} -> {error, atom_to_binary(Reason, utf8)}
+    end.
 
 now_microseconds() ->
     erlang:monotonic_time(microsecond).

@@ -9,11 +9,11 @@ pub type Format {
 }
 
 pub type Config {
-  Config(format: Format, filter: Option(String))
+  Config(format: Format, filter: Option(String), junit: Option(String))
 }
 
 pub fn from_args(args: List(String)) -> Result(Config, String) {
-  parse(args, Config(format: Console, filter: None))
+  parse(args, Config(format: Console, filter: None, junit: None))
 }
 
 fn parse(args: List(String), config: Config) -> Result(Config, String) {
@@ -22,6 +22,8 @@ fn parse(args: List(String), config: Config) -> Result(Config, String) {
     ["--format=console", ..rest] ->
       parse(rest, Config(..config, format: Console))
     ["--format=json", ..rest] -> parse(rest, Config(..config, format: Json))
+    ["--junit=" <> path, ..rest] ->
+      parse(rest, Config(..config, junit: Some(path)))
     [arg, ..rest] ->
       case string.starts_with(arg, "-") {
         True -> Error(usage("unknown option: " <> arg))
@@ -37,7 +39,8 @@ fn parse(args: List(String), config: Config) -> Result(Config, String) {
 fn usage(problem: String) -> String {
   "vouch: "
   <> problem
-  <> "\n\nUsage: gleam test -- [pattern] [--format=console|json]\n"
+  <> "\n\nUsage: gleam test -- [pattern] [--format=console|json] [--junit=path]\n"
   <> "  pattern         run only tests whose module.function contains it\n"
-  <> "  --format=json   emit a JSONL event stream instead of console output"
+  <> "  --format=json   emit a JSONL event stream instead of console output\n"
+  <> "  --junit=path    also write a JUnit XML report to the given file"
 }

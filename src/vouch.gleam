@@ -2,9 +2,12 @@
 
 import argv
 import gleam/io
+import gleam/option.{None, Some}
 import vouch/internal/config
 import vouch/internal/report/console
 import vouch/internal/report/jsonl
+import vouch/internal/report/junit
+import vouch/internal/reporter
 import vouch/internal/runner
 
 pub fn main() -> Nil {
@@ -14,9 +17,19 @@ pub fn main() -> Nil {
       runner.halt(2)
     }
     Ok(cfg) ->
-      case cfg.format {
-        config.Console -> runner.run(console.reporter(), cfg.filter)
-        config.Json -> runner.run(jsonl.reporter(), cfg.filter)
+      case cfg.format, cfg.junit {
+        config.Console, None -> runner.run(console.reporter(), cfg.filter)
+        config.Console, Some(path) ->
+          runner.run(
+            reporter.pair(console.reporter(), junit.reporter(path)),
+            cfg.filter,
+          )
+        config.Json, None -> runner.run(jsonl.reporter(), cfg.filter)
+        config.Json, Some(path) ->
+          runner.run(
+            reporter.pair(jsonl.reporter(), junit.reporter(path)),
+            cfg.filter,
+          )
       }
   }
 }
