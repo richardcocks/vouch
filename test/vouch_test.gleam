@@ -221,6 +221,7 @@ pub fn config_defaults_test() {
       filter: None,
       junit: None,
       timeout_ms: config.default_timeout_ms,
+      color: config.Auto,
     ))
 }
 
@@ -231,6 +232,7 @@ pub fn config_format_and_filter_test() {
       filter: Some("decode"),
       junit: None,
       timeout_ms: config.default_timeout_ms,
+      color: config.Auto,
     ))
   assert config.from_args([
       "--filter=decode",
@@ -242,11 +244,21 @@ pub fn config_format_and_filter_test() {
       filter: Some("decode"),
       junit: Some("report.xml"),
       timeout_ms: 250,
+      color: config.Auto,
     ))
+}
+
+pub fn config_color_test() {
+  let assert Ok(config.Config(color: config.Never, ..)) =
+    config.from_args(["--color=never"])
+  let assert Ok(config.Config(color: config.Always, ..)) =
+    config.from_args(["--color=always"])
+  let assert Ok(config.Config(color: config.Auto, ..)) = config.from_args([])
 }
 
 pub fn config_rejects_bad_args_test() {
   let assert Error(_) = config.from_args(["--nope"])
+  let assert Error(_) = config.from_args(["--color=sometimes"])
   let assert Error(_) = config.from_args(["--timeout=abc"])
   let assert Error(_) = config.from_args(["--filter=a", "--filter=b"])
   // Bare positional arguments are errors, pointing at --filter.

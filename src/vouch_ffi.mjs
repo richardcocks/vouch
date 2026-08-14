@@ -64,6 +64,24 @@ export function now_microseconds() {
   return Math.round(performance.now() * 1000);
 }
 
+export function is_stdout_tty() {
+  try {
+    if (globalThis.Deno) return Deno.stdout.isTerminal();
+    return Boolean(process.stdout.isTTY);
+  } catch {
+    return false;
+  }
+}
+
+export function env(name) {
+  try {
+    const value = globalThis.Deno ? Deno.env.get(name) : process.env[name];
+    return value === undefined ? Result$Error(undefined) : Result$Ok(value);
+  } catch {
+    return Result$Error(undefined);
+  }
+}
+
 export function write_file(path, content) {
   try {
     writeFileSync(path, content);

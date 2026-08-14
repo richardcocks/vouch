@@ -9,6 +9,7 @@ import vouch/internal/report/jsonl
 import vouch/internal/report/junit
 import vouch/internal/reporter
 import vouch/internal/runner
+import vouch/internal/term
 
 pub fn main() -> Nil {
   case config.from_args(argv.load().arguments) {
@@ -16,13 +17,21 @@ pub fn main() -> Nil {
       io.println(message)
       runner.halt(2)
     }
-    Ok(cfg) ->
+    Ok(cfg) -> {
+      let color = term.should_use_color(cfg.color)
       case cfg.format, cfg.junit {
         config.Console, None ->
-          runner.run(console.reporter(cfg.filter), cfg.filter, cfg.timeout_ms)
+          runner.run(
+            console.reporter(cfg.filter, color),
+            cfg.filter,
+            cfg.timeout_ms,
+          )
         config.Console, Some(path) ->
           runner.run(
-            reporter.pair(console.reporter(cfg.filter), junit.reporter(path)),
+            reporter.pair(
+              console.reporter(cfg.filter, color),
+              junit.reporter(path),
+            ),
             cfg.filter,
             cfg.timeout_ms,
           )
@@ -34,5 +43,6 @@ pub fn main() -> Nil {
             cfg.timeout_ms,
           )
       }
+    }
   }
 }

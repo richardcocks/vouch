@@ -20,16 +20,20 @@ pub type State {
   )
 }
 
-pub fn reporter(filter: Option(String)) -> Reporter(State) {
+pub fn reporter(filter: Option(String), color: Bool) -> Reporter(State) {
   Reporter(init: State(failures: [], todos: [], discovered: 0), handle: fn(
     state,
     e,
   ) {
-    handle(filter, state, e)
+    handle(Style(filter, color), state, e)
   })
 }
 
-fn handle(filter: Option(String), state: State, e: Event) -> State {
+type Style {
+  Style(filter: Option(String), color: Bool)
+}
+
+fn handle(style: Style, state: State, e: Event) -> State {
   case e {
     event.RunStart(total, discovered) -> {
       case total == discovered {
@@ -48,7 +52,7 @@ fn handle(filter: Option(String), state: State, e: Event) -> State {
     event.TestStart(_, _) -> state
     event.TestResult(module, function, out, duration) -> {
       let name = module <> "." <> function
-      io.println(result_line(name, out, duration))
+      io.println(result_line(style, name, out, duration))
       case out {
         outcome.Failed(detail) ->
           State(..state, failures: [#(name, detail), ..state.failures])
@@ -57,29 +61,46 @@ fn handle(filter: Option(String), state: State, e: Event) -> State {
       }
     }
     event.RunEnd(tally, duration) -> {
-      print_failures(list.reverse(state.failures))
-      print_todos(list.reverse(state.todos))
-      print_summary(filter, state.discovered, tally, duration)
+      print_failures(style, list.reverse(state.failures))
+      print_todos(style, list.reverse(state.todos))
+      print_summary(style, state.discovered, tally, duration)
       state
     }
   }
 }
 
-fn result_line(name: String, out: TestOutcome, duration: Int) -> String {
+fn result_line(
+  style: Style,
+  name: String,
+  out: TestOutcome,
+  duration: Int,
+) -> String {
   case out {
-    outcome.Pass -> "  ok    " <> name <> time(duration)
-    outcome.Skipped(p) -> "  skip  " <> name <> " — " <> p.message
-    outcome.Todo(p) -> "  todo  " <> name <> " — todo at " <> site(p)
-    outcome.Failed(_) -> "  FAIL  " <> name <> time(duration)
+    outcome.Pass ->
+      "  " <> paint(style, green, "ok") <> "    " <> name <> time(duration)
+    outcome.Skipped(p) ->
+      "  " <> paint(style, dim, "skip") <> "  " <> name <> " — " <> p.message
+    outcome.Todo(p) ->
+      "  "
+      <> paint(style, yellow, "todo")
+      <> "  "
+      <> name
+      <> " — todo at "
+      <> site(p)
+    outcome.Failed(_) ->
+      "  " <> paint(style, red, "FAIL") <> "  " <> name <> time(duration)
   }
 }
 
-fn print_failures(failures: List(#(String, outcome.FailureDetail))) -> Nil {
+fn print_failures(
+  style: Style,
+  failures: List(#(String, outcome.FailureDetail)),
+) -> Nil {
   case failures {
     [] -> Nil
     _ -> {
       io.println("")
-      io.println("Failures:")
+      io.println(paint(style, red, "Failures:"))
       list.each(failures, print_failure)
     }
   }
@@ -134,12 +155,12 @@ fn expression_value(e: gleam_panic.AssertedExpression) -> String {
   gleam_panic.describe_expression(e)
 }
 
-fn print_todos(todos: List(#(String, GleamPanic))) -> Nil {
+fn print_todos(style: Style, todos: List(#(String, GleamPanic))) -> Nil {
   case todos {
     [] -> Nil
     _ -> {
       io.println("")
-      io.println("Unimplemented code:")
+      io.println(paint(style, yellow, "Unimplemented code:"))
       todos
       |> list.group(fn(t) { site(t.1) })
       |> dict.to_list
@@ -163,7 +184,7 @@ fn print_todos(todos: List(#(String, GleamPanic))) -> Nil {
 }
 
 fn print_summary(
-  filter: Option(String),
+  style: Style,
   discovered: Int,
   tally: Tally,
   duration: Int,
@@ -171,7 +192,7 @@ fn print_summary(
   io.println("")
   case tally.passed + tally.failed + tally.todos + tally.skipped {
     0 ->
-      case discovered, filter {
+      case discovered, style.filter {
         0, _ ->
           io.println(
             "No tests found! Expected *_test functions in *_test modules under test/.",
@@ -191,19 +212,42 @@ fn print_summary(
             <> " were discovered.",
           )
       }
-    _ ->
+    _ -> {
+      let segment = fn(count, label, color) {
+        let text = int.to_string(count) <> " " <> label
+        case count {
+          0 -> text
+          _ -> paint(style, color, text)
+        }
+      }
       io.println(
-        int.to_string(tally.passed)
-        <> " passed, "
-        <> int.to_string(tally.failed)
-        <> " failed, "
-        <> int.to_string(tally.todos)
-        <> " todo, "
-        <> int.to_string(tally.skipped)
-        <> " skipped ("
+        segment(tally.passed, "passed", green)
+        <> ", "
+        <> segment(tally.failed, "failed", red)
+        <> ", "
+        <> segment(tally.todos, "todo", yellow)
+        <> ", "
+        <> segment(tally.skipped, "skipped", dim)
+        <> " ("
         <> format_duration(duration)
         <> ")",
       )
+    }
+  }
+}
+
+const green = "32"
+
+const red = "31"
+
+const yellow = "33"
+
+const dim = "2"
+
+fn paint(style: Style, code: String, text: String) -> String {
+  case style.color {
+    True -> "\u{001B}[" <> code <> "m" <> text <> "\u{001B}[0m"
+    False -> text
   }
 }
 

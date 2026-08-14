@@ -6,6 +6,8 @@
     catch_panic/1,
     decode_panic/1,
     now_microseconds/0,
+    is_stdout_tty/0,
+    env/1,
     redirect_diagnostics_to_stderr/0,
     write_file/2,
     halt/1
@@ -19,6 +21,18 @@ write_file(Path, Content) ->
 
 now_microseconds() ->
     erlang:monotonic_time(microsecond).
+
+is_stdout_tty() ->
+    case io:columns() of
+        {ok, _} -> true;
+        _ -> false
+    end.
+
+env(Name) ->
+    case os:getenv(unicode:characters_to_list(Name)) of
+        false -> {error, nil};
+        Value -> {ok, unicode:characters_to_binary(Value)}
+    end.
 
 %% Route BEAM diagnostics (e.g. crash reports from processes that tests
 %% spawned) to stderr, so stdout stays a clean stream for reporters. They

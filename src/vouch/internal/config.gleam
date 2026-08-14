@@ -9,12 +9,19 @@ pub type Format {
   Json
 }
 
+pub type ColorChoice {
+  Auto
+  Always
+  Never
+}
+
 pub type Config {
   Config(
     format: Format,
     filter: Option(String),
     junit: Option(String),
     timeout_ms: Int,
+    color: ColorChoice,
   )
 }
 
@@ -28,6 +35,7 @@ pub fn from_args(args: List(String)) -> Result(Config, String) {
       filter: None,
       junit: None,
       timeout_ms: default_timeout_ms,
+      color: Auto,
     ),
   )
 }
@@ -43,6 +51,9 @@ fn parse(args: List(String), config: Config) -> Result(Config, String) {
         None -> parse(rest, Config(..config, filter: Some(pattern)))
         Some(_) -> Error(usage("only one --filter is supported"))
       }
+    ["--color=auto", ..rest] -> parse(rest, Config(..config, color: Auto))
+    ["--color=always", ..rest] -> parse(rest, Config(..config, color: Always))
+    ["--color=never", ..rest] -> parse(rest, Config(..config, color: Never))
     ["--junit=" <> path, ..rest] ->
       parse(rest, Config(..config, junit: Some(path)))
     ["--timeout=" <> value, ..rest] ->
@@ -73,5 +84,7 @@ fn usage(problem: String) -> String {
   <> "  --filter=text   run only tests whose module.function contains text\n"
   <> "  --format=json   emit a JSONL event stream instead of console output\n"
   <> "  --junit=path    also write a JUnit XML report to the given file\n"
-  <> "  --timeout=ms    per-test timeout on the Erlang target (default 5000)"
+  <> "  --timeout=ms    per-test timeout on the Erlang target (default 5000)\n"
+  <> "  --color=mode    console colour: auto (default), always, never;\n"
+  <> "                  auto respects NO_COLOR and non-TTY output"
 }
