@@ -19,13 +19,13 @@ import {
   ExpressionKind$Unevaluated,
 } from "./vouch/internal/gleam_panic.mjs";
 
-export function run_tests(report) {
-  run(report);
+export function run_tests(state, on_begin, on_test_start, on_test_result, on_done) {
+  run(state, on_begin, on_test_start, on_test_result, on_done);
 }
 
-async function run(report) {
+async function run(state, on_begin, on_test_start, on_test_result, on_done) {
   const pkg = await readRootPackageName();
-  const results = [];
+  const tests = [];
   for (const path of await collectGleamFiles("test")) {
     const moduleName = path.slice("test/".length, -".gleam".length);
     if (!moduleName.endsWith("_test")) continue;
@@ -34,17 +34,30 @@ async function run(report) {
       if (!name.endsWith("_test")) continue;
       const fn = module[name];
       if (typeof fn !== "function" || fn.length !== 0) continue;
-      let outcome;
-      try {
-        await fn();
-        outcome = Result$Ok(undefined);
-      } catch (error) {
-        outcome = Result$Error(error);
-      }
-      results.push([moduleName, name, outcome]);
+      tests.push([moduleName, name, fn]);
     }
   }
-  report(toList(results));
+  tests.sort(([am, an], [bm, bn]) =>
+    am < bm ? -1 : am > bm ? 1 : an < bn ? -1 : an > bn ? 1 : 0,
+  );
+
+  state = on_begin(state, tests.length);
+  for (const [moduleName, name, fn] of tests) {
+    state = on_test_start(state, moduleName, name);
+    let outcome;
+    try {
+      await fn();
+      outcome = Result$Ok(undefined);
+    } catch (error) {
+      outcome = Result$Error(error);
+    }
+    state = on_test_result(state, moduleName, name, outcome);
+  }
+  on_done(state);
+}
+
+export function now_microseconds() {
+  return Math.round(performance.now() * 1000);
 }
 
 // Synchronous invocation for callers that already hold the function value.

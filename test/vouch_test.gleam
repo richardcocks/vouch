@@ -6,8 +6,10 @@
 import gleam/list
 import helpers
 import vouch
-import vouch/internal/outcome
+import vouch/internal/event
 import vouch/internal/gleam_panic
+import vouch/internal/outcome
+import vouch/internal/report/console
 import vouch/internal/runner
 
 pub fn main() -> Nil {
@@ -102,4 +104,50 @@ pub fn panic_is_failure_test() {
   let result = runner.catch_panic(helpers.panics)
   let assert outcome.Failed(outcome.PanicDetail(_)) =
     outcome.classify("vouch_test", "panic_is_failure_test", result)
+}
+
+// --- Tally and exit codes ---
+
+fn sample_todo_panic() -> gleam_panic.GleamPanic {
+  gleam_panic.GleamPanic(
+    message: "m",
+    file: "f",
+    module: "some_module",
+    function: "some_function",
+    line: 1,
+    kind: gleam_panic.Todo,
+  )
+}
+
+pub fn tally_test() {
+  let p = sample_todo_panic()
+  let outcomes = [
+    outcome.Pass,
+    outcome.Pass,
+    outcome.Skipped(p),
+    outcome.Todo(p),
+  ]
+  assert runner.tally(outcomes)
+    == event.Tally(passed: 2, failed: 0, todos: 1, skipped: 1)
+}
+
+pub fn exit_code_test() {
+  let tally = fn(passed, failed, todos, skipped) {
+    event.Tally(passed:, failed:, todos:, skipped:)
+  }
+  assert runner.exit_code(tally(1, 0, 0, 0)) == 0
+  assert runner.exit_code(tally(0, 0, 0, 1)) == 0
+  assert runner.exit_code(tally(1, 1, 0, 0)) == 1
+  assert runner.exit_code(tally(1, 0, 1, 0)) == 1
+  // A run that found no tests at all must fail loudly.
+  assert runner.exit_code(tally(0, 0, 0, 0)) == 1
+}
+
+// --- Console formatting ---
+
+pub fn format_duration_test() {
+  assert console.format_duration(0) == "0.0ms"
+  assert console.format_duration(1500) == "1.5ms"
+  assert console.format_duration(999_999) == "999.9ms"
+  assert console.format_duration(2_500_000) == "2.5s"
 }

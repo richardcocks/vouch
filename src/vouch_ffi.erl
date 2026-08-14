@@ -5,8 +5,12 @@
     run_test/2,
     catch_panic/1,
     decode_panic/1,
+    now_microseconds/0,
     halt/1
 ]).
+
+now_microseconds() ->
+    erlang:monotonic_time(microsecond).
 
 %% Paths of .gleam files under test/, relative to test/.
 find_test_files() ->
