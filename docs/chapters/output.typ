@@ -1,0 +1,92 @@
+= Output <sec-output>
+
+== The event stream is the spine
+
+Every reporter — console included — is a consumer of the same internal event
+sequence:
+
+```text
+RunStart   { total: Int, target: Target, seed/order info }
+TestStart  { module: String, function: String }
+TestResult { module, function, outcome: TestOutcome }
+RunEnd     { passed, failed, todo, skipped, duration }
+```
+
+This makes streaming the default posture and turns document formats into
+folds: JUnit XML buffers events until `RunEnd`; the console prints as events
+arrive; JSONL serialises events one per line. Adding a format is one pure-Gleam
+module.
+
+== Console reporter
+
+The default, and the most visible differentiator. Requirements:
+
+- *Rich failure rendering from the `assert` payload*: the failing expression's
+  source, subexpression values, expected/actual diff where derivable.
+  `should.*` failures render the pre-formatted string gleeunit produced — the
+  output floor, not the target.
+- Todo grouping: tests blocked on the same `todo` site collapse into one work
+  item (`5 tests blocked on todo at src/limiter.gleam:41`).
+- Summary line with all four outcome counts:
+  `12 passed, 1 failed, 3 todo, 2 skipped`.
+- Colour: green/red/yellow/dim per the outcome table in @sec-test-model;
+  respect `NO_COLOR` and non-TTY output.
+- Failure details grouped at the end, after the progress output, so the last
+  screenful is the useful one.
+
+== JSONL: `--format=json`
+
+Newline-delimited JSON, one event per line — the flag says `json` for
+discoverability, the content is JSONL. Precedent: `go test -json` and cargo's
+libtest JSON are both event streams, for the same reasons:
+
+- Streaming consumers (editors, watch supervisors, CI log tailers) get events
+  as they happen.
+- Crash-robust: every line already emitted is valid even if the run dies
+  mid-way.
+- The single-document view is derivable — fold the stream, or read the final
+  `run_end` line for totals. The reverse derivation is impossible.
+
+Field names and exact schema settle during implementation; the schema is
+*explicitly unstable in v1* and says so in the docs. Stabilising it is a v2
+commitment, made once real consumers exist.
+
+== JUnit XML: `--format=junit`
+
+The format every CI system consumes (GitHub Actions annotations, GitLab test
+reports, Jenkins). No general-purpose Gleam runner emits it today; this is the
+headline CI feature.
+
+- One `<testsuite>` per test module, `<testcase>` per test with timing.
+- Outcome mapping per @sec-test-model: Fail → `<failure>`,
+  Todo → `<failure type="todo">` (consistent with the non-zero exit code — CI
+  must not render all-green while the build fails), Skipped → `<skipped>`.
+- Target the de-facto Ant/Surefire schema, tolerant-consumer flavour; verified
+  against what GitHub Actions and GitLab actually parse rather than any purist
+  reading of the schema.
+
+Written to a file (path via flag) rather than stdout, so it can coexist with
+console output in CI.
+
+== Exit codes
+
+Computed in pure Gleam from the `RunEnd` tally:
+
+#table(
+  columns: (1.6fr, 1fr),
+  table.header([Condition], [Exit]),
+  [all tests Pass or Skipped], [0],
+  [any Fail], [1],
+  [any Todo (unimplemented code exercised)], [1],
+  [zero tests discovered], [non-zero, with a loud message],
+  [runner internal error], [non-zero, distinct message],
+)
+
+A run with only Todos (no Fails) exits 1 but renders yellow, not red — the
+"not done" state is visually distinct from the "broken" state.
+
+== Deferred formats
+
+TAP is cheap to emit (and its 1987-vintage `# TODO` directive matches vouch's
+todo semantics almost exactly) but its consumer audience barely overlaps with
+Gleam's; it is a fast-follow if anyone asks, not v1.
