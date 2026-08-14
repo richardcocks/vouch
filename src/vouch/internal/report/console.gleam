@@ -146,11 +146,16 @@ fn print_todos(todos: List(#(String, GleamPanic))) -> Nil {
       |> list.sort(fn(a, b) { string.compare(a.0, b.0) })
       |> list.each(fn(group) {
         let #(site_name, tests) = group
+        let count = case list.length(tests) {
+          1 -> "1 test"
+          n -> int.to_string(n) <> " tests"
+        }
+        let message = case tests {
+          [#(_, p), ..] -> " — \"" <> p.message <> "\""
+          [] -> ""
+        }
         io.println(
-          "  "
-          <> int.to_string(list.length(tests))
-          <> " test(s) blocked on todo at "
-          <> site_name,
+          "  " <> count <> " blocked on todo at " <> site_name <> message,
         )
       })
     }

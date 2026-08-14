@@ -2,10 +2,12 @@
 //// per-target loops live here with the narrow FFI contract at the bottom.
 
 import gleam/dynamic.{type Dynamic}
+import gleam/io
 import gleam/list
 import gleam/option.{type Option}
 import gleam/order
 import gleam/string
+import vouch/internal/config
 import vouch/internal/event.{type Tally, Tally}
 import vouch/internal/outcome.{type TestOutcome}
 import vouch/internal/reporter.{type Reporter}
@@ -163,9 +165,17 @@ pub fn run_in_process(
 // of the test in flight).
 
 // JavaScript has no cheap process primitive: tests run in-process and the
-// timeout does not apply. A documented target difference.
+// timeout does not apply. A documented target difference — but asking for a
+// non-default timeout here deserves a loud note rather than silence.
 @target(javascript)
-pub fn run(rep: Reporter(s), filter: Option(String), _timeout_ms: Int) -> Nil {
+pub fn run(rep: Reporter(s), filter: Option(String), timeout_ms: Int) -> Nil {
+  case timeout_ms == config.default_timeout_ms {
+    True -> Nil
+    False ->
+      io.println_error(
+        "vouch: --timeout has no effect on the JavaScript target — tests run in-process and cannot be interrupted",
+      )
+  }
   let started = now_microseconds()
   js_run_tests(
     #(rep.init, [], 0),
