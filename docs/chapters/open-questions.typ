@@ -1,79 +1,63 @@
 = Open questions <sec-open-questions>
 
-Most of the original assumptions were verified empirically on 2026-08-14
-against gleam 1.18.1 / node 22 during the walking-skeleton build. Findings
-first; the genuinely still-open items are at the end.
+The planning-phase assumptions and how each turned out. Kept as a record of
+what was verified (and how), plus the genuinely still-open items at the end.
 
-== Verified: panic payloads
+== Resolved during the walking skeleton (gleam 1.18.1, node 22)
 
-Both targets confirmed by catching real panics from the probe suite in
-`test/vouch_test.gleam` (one test per failure shape).
+- *Panic payload shapes, both targets.* As assumed: an Erlang map with atom
+  keys, a JavaScript `Error` with the same data as properties. All shapes
+  carry `gleam_error`, `message`, `file`, `module`, `function`, `line`;
+  `assert` adds structured operand data. The `todo` site is present on
+  *both* targets, so the Todo/Skipped split works everywhere.
+- *`gleam test -- <args>` forwards arguments* — confirmed; all vouch flags
+  ride on it.
+- *`gleam new` still scaffolds gleeunit* — and its template test now uses
+  the `assert` keyword, so new projects are assert-idiomatic.
+- *gleeunit 1.11.0 architecture* — as assumed (EUnit delegation on Erlang,
+  bespoke async loop in FFI on JavaScript, no configuration surface). Bonus
+  finding: it ships an internal typed payload decoder
+  (`gleeunit/internal/gleam_panic`), which served as a reference for
+  vouch's — evidence the payload shapes are stable enough to type.
+- *Async tests on JavaScript* — gleeunit awaits them, so suites may rely on
+  it; vouch awaits too.
 
-*Erlang:* the error reason is a map with atom keys. All shapes carry
-`gleam_error` (`assert` / `let_assert` / `panic` / `todo`), `message`, `file`,
-`module`, `function`, `line`. `assert` adds `kind`
-(`binary_operator` with `operator`/`left`/`right`, `function_call` with
-`arguments`, or `expression`), each operand a map with `start`/`end`/`kind`
-(`literal` / `expression` / `unevaluated`) and `value`. `let_assert` adds the
-unmatched `value` and pattern spans.
+== Resolved during implementation
 
-*JavaScript:* the thrown value is an `Error` instance with the same data as
-own properties (`gleam_error` as a string, and the same site and kind fields).
-
-*Consequence confirmed:* the `todo` payload carries its site on _both_
-targets, so the Todo/Skipped split of @sec-test-model works everywhere. The
-probe run showed a deep todo reporting `module: "helpers"`,
-`function: "unimplemented"` while the running test was
-`vouch_test.todo_deep_test` — exactly the signal the rule needs.
-
-*Bonus finding:* gleeunit 1.11.0 ships an internal typed decoder for these
-payloads (`gleeunit/internal/gleam_panic`, with per-target FFI). It is
-internal API and vouch must not depend on it, but it is a correct, current
-reference for the decode module — and evidence the shapes are stable enough
-for gleeunit to type them.
-
-== Verified: toolchain behaviour
-
-- *`gleam test -- <args>` forwards arguments*: confirmed;
-  `argv.load().arguments` sees everything after `--`.
-- *`gleam new` (1.18.1) still scaffolds gleeunit* — and the template test now
-  uses the `assert` keyword, not `gleeunit/should`. The migration pitch holds;
-  new projects are already assert-idiomatic.
-- *Discovery mechanics*: source-file globbing works and is what gleeunit does
-  (`filelib:wildcard/2` over `test/` on Erlang; a recursive directory walk on
-  JavaScript, importing `../<package>/<module>.mjs` relative to the FFI
-  module). vouch's skeleton does the same.
-- *Async tests*: gleeunit `await`s every test function on JavaScript, so
-  suites may rely on it. Decision adopted: vouch awaits too (the skeleton
-  already does).
-- *gleeunit 1.11.0 architecture*: Erlang still delegates to EUnit
-  (with `ScaleTimeouts(10)` and a custom progress listener); JavaScript is a
-  bespoke async loop entirely in FFI; no configuration surface. As assumed.
+- *Exit-reason fidelity under process isolation* — the question dissolved:
+  the test process catches its own panic and message-passes the payload
+  back, so nothing depends on `DOWN`-reason fidelity for ordinary failures
+  (@sec-execution). For genuine process deaths, the decoder's recursive
+  search through nested exit-reason tuples recovers wrapped payloads —
+  including todos raised inside OTP callbacks, verified against a real
+  gen_server fixture.
+- *Compiler floor* — `gleam >= 1.14`, verified empirically with podman
+  containers on both targets. The `assert` keyword alone needs 1.11, but
+  `gleam_stdlib` 1.x requires 1.14 (making anything lower unsatisfiable in
+  practice), and the `Type$Constructor` prelude naming vouch's JavaScript
+  FFI imports is confirmed working at 1.14.
+- *Default per-test timeout* — 5000ms, `--timeout=ms` to change it;
+  requesting a non-default timeout on JavaScript prints a stderr note.
+- *JSONL schema* — field names settled (see @sec-output) but explicitly
+  unstable until v2.
+- *Stream hygiene* — BEAM crash reports from test-spawned processes went to
+  stdout and could corrupt JSONL; the default logger handler is re-added
+  pointing at stderr at run start. (`logger:update_handler_config` cannot
+  change the handler type at runtime; the reports are asynchronous and often
+  lost to `erlang:halt` — which made the bug appear nondeterministic.)
 
 == Still open
 
-+ *Exit-reason normalisation under process isolation.* When a test runs in a
-  spawned BEAM process, the panic arrives as a monitor `DOWN` reason rather
-  than a caught exception. Verify the payload map survives intact through
-  that path before building isolation (@sec-execution).
-
-+ *Payload stability across Gleam versions.* Shapes are verified for gleam
-  1.18.1. Decide the minimum supported compiler version and whether the
-  decoder should tolerate missing fields (it should — degrade per the rules
-  in @sec-test-model).
-
-+ *Whether `gleam dev` exists / where watch mode lives* — deferred with watch
-  mode itself (v2).
-
-+ *showtime / startest current state* — worth a look at startest's filtering
-  UX before designing vouch's flags.
-
-+ *Default per-test timeout value* on the BEAM (and its flag name).
-
-+ *JSONL field-level schema* — settles during implementation; unstable in v1
-  by policy.
-
-+ *JavaScript sequencing in Gleam.* The skeleton drives the async test loop
-  from FFI and calls back into Gleam. Evaluate pulling sequencing into Gleam
-  with promise bindings (likely via `gleam_javascript`) against the
-  near-zero-dependency budget (@sec-goals).
++ *Payload stability across future Gleam versions.* Shapes are verified for
+  1.14–1.18. The suite's permanently-skipped todo-bodied test doubles as a
+  canary: if a compiler change breaks site decoding, the degradation rule
+  flips it to Todo and the suite goes red on upgrade.
++ *Whether `gleam dev` exists / where watch mode lives* — deferred with
+  watch mode itself (v2).
++ *showtime / startest current state* — worth a look at startest's
+  filtering UX before extending vouch's flags.
++ *JavaScript sequencing in Gleam* — evaluate promise bindings (likely
+  `gleam_javascript`) against the near-zero-dependency budget (@sec-goals).
++ *Publish version* — 0.1.0 signals early-stage but gives users no semver
+  protection; Gleam culture (and the `gleam publish` warning) favours
+  1.0.0 with honest major bumps. Undecided; publishing is on hold.

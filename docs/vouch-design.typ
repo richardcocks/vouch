@@ -31,10 +31,11 @@ vouch is a test runner for Gleam. Written from scratch â€” not a gleeunit fork â
 but compatible with the gleeunit convention, so existing test suites run
 unchanged.
 
-This document records the design as settled during planning, before the first
-line of code. Where a decision rests on an unverified assumption, that
-assumption is listed in @sec-open-questions and must be checked against the
-real toolchain during the walking-skeleton phase.
+This document records the design as settled during planning and has been
+synchronised with the v1 implementation (August 2026). Where implementation
+overturned or refined a planned design, the chapters describe what was
+actually built; @sec-open-questions records what each original assumption
+turned out to be.
 
 #v(1em)
 

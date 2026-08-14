@@ -61,16 +61,36 @@ list in @sec-open-questions.
 
 == Outcome model
 
+As implemented, classification runs in two stages. Execution produces an
+`Invocation` — how the run of one test ended mechanically — and
+classification turns it into a `TestOutcome`:
+
 ```gleam
+pub type Invocation {
+  Passed
+  Panicked(Dynamic)      // caught panic, raw payload
+  TimedOut(after_ms: Int)
+  Died(Dynamic)          // process died without reporting (Erlang)
+}
+
 pub type TestOutcome {
-  Pass(duration: Duration)
-  Fail(detail: FailureDetail, duration: Duration)
-  Todo(site: Site, message: Option(String), duration: Duration)
-  Skipped(message: Option(String))
+  Pass
+  Skipped(GleamPanic)    // the test body itself is a todo
+  Todo(GleamPanic)       // the test hit a todo elsewhere
+  Failed(detail: FailureDetail)
+}
+
+pub type FailureDetail {
+  PanicDetail(GleamPanic)
+  UnknownDetail(raw: Dynamic)
+  TimeoutDetail(after_ms: Int)
+  ExitDetail(raw: Dynamic)
 }
 ```
 
-(Shapes indicative; exact fields settle during implementation.)
+Durations are not part of outcomes; they ride on the `TestResult` event
+(@sec-output). `Died` payloads are decoded with the same recursive search as
+caught panics, so a linked process's panic still renders fully.
 
 == Todo and Skipped semantics
 
@@ -88,9 +108,9 @@ code under test. This is the test-driven development signal: it separates "I
 have not implemented this" (yellow) from "I have implemented this wrong" (red),
 which call for different responses. Todo is still not-done, so it contributes a
 non-zero exit code — CI must not go green while `todo` is live in exercised
-code paths. Output shows the blocking site (`todo at src/limiter.gleam:41`),
-and the console reporter groups tests blocked on the same site into a single
-work item: `5 tests blocked on todo at src/limiter.gleam:41`.
+code paths. Output shows the site, and the console reporter groups tests blocked on the
+same site into a single work item carrying the todo's own message:
+`todo at src/limiter.gleam:41 — "rate limiting is not implemented yet" (5 tests)`.
 
 *Skipped — the test body is the todo.* `pub fn foo_test() { todo }` is a
 pending test, not a failing one. It renders dimmed, maps to `<skipped>` in

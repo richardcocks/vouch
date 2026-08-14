@@ -38,21 +38,37 @@ The FFI contract, in full:
 #table(
   columns: (1.2fr, 1fr, 1fr),
   table.header([Operation], [Erlang], [JavaScript]),
-  [Enumerate candidate test modules],
-  [scan compiled modules in the build directory],
-  [glob compiled `.mjs` under `build/dev/javascript/`],
+  [Enumerate candidate test files],
+  [`filelib:wildcard/2` over `test/`],
+  [recursive directory walk of `test/`],
   [Enumerate a module's exported zero-arity functions],
   [`Module:module_info(exports)`],
   [dynamic import, inspect exports],
-  [Invoke a function, capturing any panic as data],
-  [`try`/`catch`, normalise the error term],
-  [`try`/`catch`, normalise the thrown value],
+  [Run one test],
+  [spawned monitored process with timeout (@sec-execution)],
+  [async loop awaiting each test, threading reporter state through Gleam
+    callbacks],
+  [Catch a panic from a directly-held function],
+  [`try`/`catch`],
+  [`try`/`catch`],
+  [Decode a panic payload],
+  [match the error map, searching nested exit-reason tuples],
+  [read the thrown Error's properties],
   [Monotonic clock],
   [`erlang:monotonic_time/1`],
   [`performance.now()`],
+  [Write a file (JUnit reports)],
+  [`file:write_file/2`],
+  [`writeFileSync`],
+  [Terminal facts (TTY, env vars)],
+  [`io:columns/0`, `os:getenv/1`],
+  [`isTTY` / `Deno.stdout.isTerminal`, env lookup],
+  [Route BEAM diagnostics to stderr],
+  [re-add the default logger handler],
+  [not needed],
   [Halt with exit code],
   [`erlang:halt/1`],
-  [`process.exit` / target equivalent],
+  [`process.exit` / `Deno.exit`],
   [Read CLI arguments],
   [via the `argv` package],
   [via the `argv` package],
@@ -81,23 +97,35 @@ filesystem and process APIs; that variance stays inside `vouch_ffi.mjs`.
 
 ```text
 vouch/
-  gleam.toml              # deps: stdlib + argv, ideally nothing else
+  gleam.toml                       # deps: stdlib + argv, nothing else
   src/
-    vouch.gleam            # public API: main(), run(Config)
-    vouch/config.gleam     # flags parsed from argv (filter, format)
-    vouch/discover.gleam   # pure: filter candidate modules/functions by convention
-    vouch/outcome.gleam    # TestOutcome and failure detail types
-    vouch/event.gleam      # RunStart / TestStart / TestResult / RunEnd
-    vouch/decode.gleam     # panic payload -> structured failure detail
-    vouch/report/console.gleam
-    vouch/report/jsonl.gleam
-    vouch/report/junit.gleam
-    vouch_ffi.erl          # the FFI contract, Erlang
-    vouch_ffi.mjs          # the FFI contract, JavaScript
+    vouch.gleam                    # public API: main()
+    vouch/internal/config.gleam    # flags parsed from argv
+    vouch/internal/gleam_panic.gleam  # typed panic payloads + decode external
+    vouch/internal/outcome.gleam   # Invocation, TestOutcome, classification
+    vouch/internal/event.gleam     # RunStart / TestStart / TestResult / RunEnd
+    vouch/internal/reporter.gleam  # Reporter(state) fold + pair combinator
+    vouch/internal/runner.gleam    # per-target loops, tally, exit codes
+    vouch/internal/term.gleam      # colour decision (TTY, NO_COLOR)
+    vouch/internal/json.gleam      # minimal JSON encoding (no dependency)
+    vouch/internal/report/console.gleam
+    vouch/internal/report/jsonl.gleam
+    vouch/internal/report/junit.gleam
+    vouch_ffi.erl                  # the FFI contract, Erlang
+    vouch_ffi.mjs                  # the FFI contract, JavaScript
   test/
-    vouch_test.gleam       # vouch tests itself
-  docs/                   # this document
+    vouch_test.gleam               # unit suite (vouch runs itself)
+    vouch_e2e_test.gleam           # spawns gleam test in the playground
+    helpers.gleam, *.erl           # fixtures, never discovered
+  examples/playground/             # scratch consumer; e2e fixture project
+  docs/                            # this document
 ```
+
+Modules under `vouch/internal/` are hidden from generated documentation by
+Gleam's path convention; nothing under it is public API. (Naming lesson
+recorded for posterity: `panic`, `todo`, and `test` are reserved words and
+cannot be module names, field labels, or parameter names — hence
+`gleam_panic`.)
 
 == Data flow
 

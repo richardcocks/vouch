@@ -6,11 +6,15 @@ Every reporter — console included — is a consumer of the same internal event
 sequence:
 
 ```text
-RunStart   { total: Int, target: Target, seed/order info }
-TestStart  { module: String, function: String }
-TestResult { module, function, outcome: TestOutcome }
-RunEnd     { passed, failed, todo, skipped, duration }
+RunStart   { total, discovered }   // discovered = count before filtering
+TestStart  { module, function }
+TestResult { module, function, outcome, duration_microseconds }
+RunEnd     { tally: { passed, failed, todos, skipped }, duration_microseconds }
 ```
+
+Carrying the pre-filter `discovered` count lets reporters distinguish
+"nothing exists" from "nothing matched the filter", and print
+`Running 5 of 28 tests` under a filter.
 
 This makes streaming the default posture and turns document formats into
 folds: JUnit XML buffers events until `RunEnd`; the console prints as events
@@ -25,12 +29,14 @@ The default, and the most visible differentiator. Requirements:
   source, subexpression values, expected/actual diff where derivable.
   `should.*` failures render the pre-formatted string gleeunit produced — the
   output floor, not the target.
-- Todo grouping: tests blocked on the same `todo` site collapse into one work
-  item (`5 tests blocked on todo at src/limiter.gleam:41`).
+- Todo grouping: tests blocked on the same `todo` site collapse into one
+  work item under an "Unimplemented code:" section, carrying the todo's own
+  message: `todo at src/limiter.gleam:41 — "..." (5 tests)`.
 - Summary line with all four outcome counts:
-  `12 passed, 1 failed, 3 todo, 2 skipped`.
-- Colour: green/red/yellow/dim per the outcome table in @sec-test-model;
-  respect `NO_COLOR` and non-TTY output.
+  `12 passed, 1 failed, 3 todo, 2 skipped (1.2s)`.
+- Colour: green/red/yellow/dim per the outcome table in @sec-test-model,
+  controlled by `--color=auto|always|never`; auto colours only when stdout
+  is a TTY and `NO_COLOR` is unset (empty counts as unset).
 - Failure details grouped at the end, after the progress output, so the last
   screenful is the useful one.
 
@@ -47,9 +53,12 @@ libtest JSON are both event streams, for the same reasons:
 - The single-document view is derivable — fold the stream, or read the final
   `run_end` line for totals. The reverse derivation is impossible.
 
-Field names and exact schema settle during implementation; the schema is
-*explicitly unstable in v1* and says so in the docs. Stabilising it is a v2
-commitment, made once real consumers exist.
+The v1 events are `run_start` (total, discovered), `test_start`,
+`test_result` (outcome, `duration_us`, and per-kind failure fields such as
+`left`/`right`/`operator` for asserts, todo site fields, `timeout_ms`), and
+`run_end` (tally and duration). The field-level schema is *explicitly
+unstable in v1*; stabilising it is a v2 commitment, made once real
+consumers exist.
 
 == JUnit XML: `--format=junit`
 
@@ -76,10 +85,12 @@ Computed in pure Gleam from the `RunEnd` tally:
   columns: (1.6fr, 1fr),
   table.header([Condition], [Exit]),
   [all tests Pass or Skipped], [0],
-  [any Fail], [1],
+  [any Fail (including timeouts)], [1],
   [any Todo (unimplemented code exercised)], [1],
-  [zero tests discovered], [non-zero, with a loud message],
-  [runner internal error], [non-zero, distinct message],
+  [zero tests ran — nothing discovered, or a filter matched nothing; the
+    message says which], [1],
+  [unusable arguments (unknown flag, bare positional argument)], [2, with
+    usage text],
 )
 
 A run with only Todos (no Fails) exits 1 but renders yellow, not red — the
