@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The verified compiler floor (see gleam.toml).
+          - gleam: "1.14.0"
+            otp: "27"
+          # Current toolchain.
+          - gleam: "1.18.1"
+            otp: "28"
+    name: test (gleam ${{ matrix.gleam }}, otp ${{ matrix.otp }})
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ matrix.otp }}
+          gleam-version: ${{ matrix.gleam }}
+      # Node runs the JavaScript target, including the playground e2e runs.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: gleam deps download
+      - run: gleam test
+      - run: gleam test --target javascript
+
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "28"
+          gleam-version: "1.18.1"
+      - run: gleam format --check src test

@@ -7,8 +7,7 @@ licences = ["Apache-2.0"]
 # JS prelude imports are confirmed working there.
 gleam = ">= 1.14.0"
 
-# Uncomment once the repository is on GitHub:
-# repository = { type = "github", user = "", repo = "vouch" }
+repository = { type = "github", user = "richardcocks", repo = "vouch" }
 
 [javascript.deno]
 allow_read = ["gleam.toml", "test", "build"]
