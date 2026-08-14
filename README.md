@@ -1,5 +1,7 @@
 # vouch
 
+[![CI](https://github.com/richardcocks/vouch/actions/workflows/ci.yml/badge.svg)](https://github.com/richardcocks/vouch/actions/workflows/ci.yml)
+
 A test runner for Gleam. Compatible with the gleeunit convention — swap one
 line and your existing suite runs unchanged — with the internals a test
 runner should have:
