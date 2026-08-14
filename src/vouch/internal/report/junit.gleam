@@ -102,7 +102,7 @@ fn test_case(r: Case) -> String {
     outcome.Todo(p) ->
       open
       <> ">\n      <failure type=\"todo\" message=\""
-      <> escape("blocked on todo at " <> site(p))
+      <> escape("todo at " <> site(p))
       <> "\">"
       <> escape(p.message)
       <> "</failure>\n    </testcase>\n"

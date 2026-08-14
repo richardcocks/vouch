@@ -290,7 +290,7 @@ pub fn junit_render_test() {
   assert string.contains(xml, "<skipped message=\"m\"/>")
   assert string.contains(
     xml,
-    "<failure type=\"todo\" message=\"blocked on todo at some_module.some_function:1\">m</failure>",
+    "<failure type=\"todo\" message=\"todo at some_module.some_function:1\">m</failure>",
   )
 }
 

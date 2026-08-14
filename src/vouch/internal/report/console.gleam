@@ -69,7 +69,7 @@ fn result_line(name: String, out: TestOutcome, duration: Int) -> String {
   case out {
     outcome.Pass -> "  ok    " <> name <> time(duration)
     outcome.Skipped(p) -> "  skip  " <> name <> " — " <> p.message
-    outcome.Todo(p) -> "  todo  " <> name <> " — blocked on todo at " <> site(p)
+    outcome.Todo(p) -> "  todo  " <> name <> " — todo at " <> site(p)
     outcome.Failed(_) -> "  FAIL  " <> name <> time(duration)
   }
 }
@@ -139,7 +139,7 @@ fn print_todos(todos: List(#(String, GleamPanic))) -> Nil {
     [] -> Nil
     _ -> {
       io.println("")
-      io.println("Blocked on unimplemented code:")
+      io.println("Unimplemented code:")
       todos
       |> list.group(fn(t) { site(t.1) })
       |> dict.to_list
@@ -155,7 +155,7 @@ fn print_todos(todos: List(#(String, GleamPanic))) -> Nil {
           [] -> ""
         }
         io.println(
-          "  " <> count <> " blocked on todo at " <> site_name <> message,
+          "  todo at " <> site_name <> message <> " (" <> count <> ")",
         )
       })
     }
