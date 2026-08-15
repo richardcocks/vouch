@@ -92,6 +92,13 @@ Decisions recorded from the build:
 - Passthrough flags are validated once at startup with the same parser
   the inner run uses, so a typo fails loudly before the loop starts
   instead of on every cycle.
+- Quitting needs two paths, because a foreground BEAM turns Ctrl+C into
+  the emulator's BREAK menu rather than an exit. On Unix-like systems
+  SIGINT is taken over via `os:set_signal` and halts with 130; that API
+  is unsupported on Windows, so a stdin listener quits on `q` + Enter
+  everywhere (the inner runs never contend for stdin — their ports get
+  pipes). An eof on stdin means the watcher is not interactive, and the
+  listener retires rather than treating it as a quit.
 - Each cycle pays full `gleam test` startup (compile check + VM boot);
   Gleam's incremental compilation keeps it tolerable, but Vitest-style
   instant re-runs are not achievable from outside the toolchain. A

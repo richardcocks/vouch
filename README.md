@@ -72,6 +72,10 @@ program that re-invokes `gleam test` per cycle, so each rerun includes the
 toolchain's incremental compile check — a compile error shows up in the
 loop like any other red result, and the watcher keeps waiting for the fix.
 
+To quit, press `q` then Enter. Ctrl+C also exits cleanly on Unix-like
+systems; on Windows the BEAM turns Ctrl+C into its BREAK menu (choose
+`a` for abort there — or just use `q`).
+
 ## Outcomes
 
 | Outcome | Meaning | Exit code contribution |

@@ -13,7 +13,8 @@
     halt/1,
     file_snapshot/1,
     run_passthrough/2,
-    sleep_ms/1
+    sleep_ms/1,
+    install_quit_hooks/0
 ]).
 
 write_file(Path, Content) ->
@@ -264,6 +265,37 @@ drain_through(Port) ->
 
 sleep_ms(Ms) ->
     receive after Ms -> nil end.
+
+%% Quitting the watch loop. A foreground BEAM turns Ctrl+C into the
+%% emulator's BREAK menu rather than an exit, so two paths are installed:
+%% - On Unix-like systems SIGINT is taken over (os:set_signal is not
+%%   supported on Windows, hence the catch) and vouch_signal_handler
+%%   halts cleanly on Ctrl+C.
+%% - Everywhere, a stdin listener quits on "q" + Enter. The inner runs
+%%   never contend for stdin — their ports get pipes. eof means stdin is
+%%   not interactive (piped or closed), so the listener just retires
+%%   rather than treating it as a quit.
+install_quit_hooks() ->
+    catch begin
+        os:set_signal(sigint, handle),
+        gen_event:add_handler(erl_signal_server, vouch_signal_handler, [])
+    end,
+    spawn(fun quit_listener/0),
+    nil.
+
+quit_listener() ->
+    case io:get_line("") of
+        eof ->
+            ok;
+        {error, _} ->
+            ok;
+        Line ->
+            case string:trim(unicode:characters_to_list(Line)) of
+                "q" -> erlang:halt(0);
+                "quit" -> erlang:halt(0);
+                _ -> quit_listener()
+            end
+    end.
 
 beam_name(ModuleName) ->
     binary:replace(ModuleName, <<"/">>, <<"@">>, [global]).

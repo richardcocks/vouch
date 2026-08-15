@@ -27,6 +27,7 @@ const poll_interval_ms = 250
 
 @target(erlang)
 pub fn run(args: List(String)) -> Nil {
+  install_quit_hooks()
   let color = term.should_use_color(config.Auto)
   case inner_args(args, color) {
     Error(message) -> {
@@ -91,7 +92,7 @@ fn print_status(code: Int, color: Bool) -> Nil {
     <> paint(
       color,
       dim,
-      " · watching " <> string.join(watched, ", ") <> " · Ctrl+C to stop",
+      " · watching " <> string.join(watched, ", ") <> " · q then Enter to quit",
     ),
   )
 }
@@ -176,3 +177,7 @@ fn run_passthrough(command: String, args: List(String)) -> Result(Int, Nil)
 @target(erlang)
 @external(erlang, "vouch_ffi", "sleep_ms")
 fn sleep_ms(ms: Int) -> Nil
+
+@target(erlang)
+@external(erlang, "vouch_ffi", "install_quit_hooks")
+fn install_quit_hooks() -> Nil
