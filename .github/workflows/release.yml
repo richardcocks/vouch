@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "28"
+          gleam-version: "1.18.1"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check tag matches gleam.toml version
+        run: |
+          version=$(grep -m1 '^version' gleam.toml | cut -d'"' -f2)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match gleam.toml version $version" >&2
+            exit 1
+          fi
+      - run: gleam deps download
+      - run: gleam test
+      - run: gleam test --target javascript
+      - name: Publish to Hex
+        run: gleam publish --yes
+        env:
+          HEXPM_API_KEY: ${{ secrets.HEXPM_API_KEY }}
+      - name: Create GitHub release
+        run: gh release create "$GITHUB_REF_NAME" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
