@@ -47,10 +47,39 @@ gleam add --dev vouch
 
 That is the whole migration. Tests are discovered by the ecosystem
 convention: modules under `test/` ending in `_test`, public zero-arity
-functions ending in `_test`. Assertions need no library — `assert`,
-`let assert`, `panic`, and `todo` are language features, and existing
-`gleeunit/should` calls keep working (they are ordinary functions that
-panic).
+functions ending in `_test`.
+
+## Assertions: use `assert`
+
+Assertions need no library. `assert`, `let assert`, `panic`, and `todo`
+are language features, and vouch's rich failure output is decoded from
+the payloads the compiler emits for them — that decoding is the whole
+reason the left/right/operator detail exists.
+
+`gleeunit/should` is a different story. Those calls still *run* under
+vouch: they are ordinary functions that panic, so a suite that keeps
+gleeunit as a dev-dependency for them will pass and fail correctly. But
+a `should.equal` failure reaches the runner as a bare panic carrying
+only a message string. There are no operands to take apart, so it prints
+as one flat line and you get none of the detail you switched runners
+for. gleeunit's own documentation now says to use the `assert` keyword
+instead of that module.
+
+So convert first, then swap the runner:
+
+```sh
+gleam run -m asset update
+```
+
+[asset](https://github.com/gearsDatapacks/asset) rewrites `should` calls
+into `assert` syntax across your `test/` directory.
+
+vouch deliberately ships no `should` module of its own. Providing the
+compatibility without the failure detail would make the swap look like
+it changed nothing, which is worse than asking for one mechanical
+conversion. There is no legacy cliff here either: vouch requires Gleam
+>= 1.14 and `assert` arrived in 1.11, so every project that can compile
+vouch at all already has the keyword.
 
 ## Usage
 
