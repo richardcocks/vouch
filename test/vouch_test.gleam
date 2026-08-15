@@ -3,12 +3,14 @@
 //// exercises discovery, execution, panic capture, decoding, classification,
 //// and the exit-code rules on both targets.
 
+import gleam/dynamic
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
 import helpers
 import vouch
 import vouch/internal/config
+import vouch/internal/describe
 import vouch/internal/event
 import vouch/internal/gleam_panic
 import vouch/internal/json
@@ -236,6 +238,213 @@ pub fn exit_code_test() {
   assert runner.exit_code(tally(1, 0, 1, 0)) == 1
   // A run that found no tests at all must fail loudly.
   assert runner.exit_code(tally(0, 0, 0, 0)) == 1
+}
+
+// --- Failure wording ---
+
+/// A real failing `assert ==`, decoded from the compiler's own payload,
+/// must read as an expectation rather than a field dump.
+pub fn describe_assert_equality_test() {
+  let assert Error(raw) = runner.catch_panic(helpers.assert_fails)
+  let assert Ok(p) = gleam_panic.from_dynamic(raw)
+  // helpers.assert_fails is `assert 1 + 1 == 3`.
+  assert describe.failure(outcome.PanicDetail(p))
+    == ["Expected: 3", "But was:  2"]
+}
+
+/// A predicate call is quoted from source: that it returned False is not
+/// news, but what was called is.
+pub fn describe_assert_call_test() {
+  let assert Error(raw) = runner.catch_panic(helpers.assert_call_fails)
+  let assert Ok(p) = gleam_panic.from_dynamic(raw)
+  // helpers.assert_call_fails is `assert is_even(3)`. The argument needs no
+  // line of its own: `3 = 3` would only repeat the quoted call.
+  assert describe.failure(outcome.PanicDetail(p))
+    == ["Expected: is_even(3) to be True", "But was:  False"]
+}
+
+/// An argument written as a name gets a line giving the value behind it.
+pub fn describe_assert_call_argument_test() {
+  let assert Error(raw) =
+    runner.catch_panic(helpers.assert_call_with_binding_fails)
+  let assert Ok(p) = gleam_panic.from_dynamic(raw)
+  assert describe.failure(outcome.PanicDetail(p))
+    == ["Expected: is_even(n) to be True", "But was:  False", "  n = 3"]
+}
+
+pub fn describe_assert_expression_test() {
+  let assert Error(raw) = runner.catch_panic(helpers.assert_expression_fails)
+  let assert Ok(p) = gleam_panic.from_dynamic(raw)
+  assert describe.failure(outcome.PanicDetail(p))
+    == ["Expected: ready to be True", "But was:  False"]
+}
+
+/// The pattern that failed to match is quoted from the source, so the
+/// expectation names the shape the test was looking for.
+pub fn describe_let_assert_test() {
+  let assert Error(raw) = runner.catch_panic(helpers.let_assert_fails)
+  let assert Ok(p) = gleam_panic.from_dynamic(raw)
+  assert describe.failure(outcome.PanicDetail(p))
+    == ["Expected: a value matching Ok(_)", "But was:  Error(\"nope\")"]
+}
+
+/// Source quoting is a nicety on top of the payload: when the file behind
+/// the offsets cannot be read, every kind still has wording that stands on
+/// the payload alone.
+pub fn describe_without_source_test() {
+  let unreadable = fn(kind) {
+    describe.failure(outcome.PanicDetail(
+      gleam_panic.GleamPanic(
+        ..panic_with(kind),
+        file: "test/no_such_file.gleam",
+      ),
+    ))
+  }
+  assert unreadable(gleam_panic.Assert(
+      start: 0,
+      end: 10,
+      expression_start: 7,
+      kind: gleam_panic.FunctionCall(arguments: [expression(dynamic.int(3))]),
+    ))
+    == ["Expected: True", "But was:  False", "  argument 1 = 3"]
+  assert unreadable(gleam_panic.LetAssert(
+      start: 0,
+      end: 10,
+      pattern_start: 4,
+      pattern_end: 9,
+      value: dynamic.int(3),
+    ))
+    == ["Expected: the pattern to match", "But was:  3"]
+}
+
+/// Every operator vouch can be handed, in one place: each gets the phrasing
+/// that matches how it reads aloud, and each keeps the actual value.
+pub fn describe_operators_test() {
+  let detail = fn(op) {
+    describe.failure(
+      outcome.PanicDetail(binop_panic(op, dynamic.int(5), dynamic.int(3))),
+    )
+  }
+  assert detail("==") == ["Expected: 3", "But was:  5"]
+  assert detail("!=") == ["Expected: anything except 3", "But was:  5"]
+  assert detail("<") == ["Expected: less than 3", "But was:  5"]
+  assert detail("<=") == ["Expected: less than or equal to 3", "But was:  5"]
+  assert detail(">") == ["Expected: greater than 3", "But was:  5"]
+  assert detail(">=") == ["Expected: greater than or equal to 3", "But was:  5"]
+  // The float variants of the comparisons read identically.
+  assert detail("<.") == detail("<")
+  assert detail("<=.") == detail("<=")
+  assert detail(">.") == detail(">")
+  assert detail(">=.") == detail(">=")
+  // An operator vouch has never seen still names both operands.
+  assert detail("~~") == ["Expected: 5 ~~ 3 to hold", "But was:  False"]
+}
+
+/// `&&` and `||` name the requirement and show both operands, including the
+/// short-circuited one — which side was False is the whole answer.
+pub fn describe_boolean_operators_test() {
+  assert describe.failure(
+      outcome.PanicDetail(binop_panic(
+        "&&",
+        dynamic.bool(True),
+        dynamic.bool(False),
+      )),
+    )
+    == ["Expected: both sides True", "But was:  True && False"]
+  assert describe.failure(
+      outcome.PanicDetail(binop_panic(
+        "||",
+        dynamic.bool(False),
+        dynamic.bool(False),
+      )),
+    )
+    == ["Expected: at least one side True", "But was:  False || False"]
+}
+
+/// `assert actual == expected` is the usual shape, so the left operand is
+/// the actual value — unless it is a literal, which can only be the
+/// expectation.
+pub fn describe_orients_literal_as_expected_test() {
+  let expected_left =
+    gleam_panic.AssertedExpression(
+      start: 0,
+      end: 1,
+      kind: gleam_panic.Literal(dynamic.int(5)),
+    )
+  let computed_right =
+    gleam_panic.AssertedExpression(
+      start: 2,
+      end: 3,
+      kind: gleam_panic.Expression(dynamic.int(4)),
+    )
+  assert describe.failure(
+      outcome.PanicDetail(
+        panic_with(gleam_panic.Assert(
+          start: 0,
+          end: 3,
+          expression_start: 0,
+          kind: gleam_panic.BinaryOperator(
+            operator: "==",
+            left: expected_left,
+            right: computed_right,
+          ),
+        )),
+      ),
+    )
+    == ["Expected: 5", "But was:  4"]
+}
+
+pub fn describe_timeout_test() {
+  assert describe.failure(outcome.TimeoutDetail(100))
+    == ["Timed out after 100ms"]
+}
+
+/// Windows paths are normalised so the site stays clickable in terminals
+/// and editors that only link forward slashes.
+pub fn describe_location_test() {
+  let p = panic_with(gleam_panic.Panic)
+  assert describe.location(
+      gleam_panic.GleamPanic(..p, file: "test\\my_test.gleam", line: 28),
+    )
+    == "test/my_test.gleam:28"
+}
+
+fn panic_with(kind: gleam_panic.PanicKind) -> gleam_panic.GleamPanic {
+  gleam_panic.GleamPanic(
+    message: "Assertion failed.",
+    file: "test/my_test.gleam",
+    module: "my_test",
+    function: "some_test",
+    line: 1,
+    kind:,
+  )
+}
+
+/// A synthetic binary-operator panic, standing in for the payloads the
+/// compiler emits for operators vouch's own suite cannot fail on demand.
+fn binop_panic(
+  op: String,
+  left: dynamic.Dynamic,
+  right: dynamic.Dynamic,
+) -> gleam_panic.GleamPanic {
+  panic_with(gleam_panic.Assert(
+    start: 0,
+    end: 0,
+    expression_start: 0,
+    kind: gleam_panic.BinaryOperator(
+      operator: op,
+      left: expression(left),
+      right: expression(right),
+    ),
+  ))
+}
+
+fn expression(value: dynamic.Dynamic) -> gleam_panic.AssertedExpression {
+  gleam_panic.AssertedExpression(
+    start: 0,
+    end: 0,
+    kind: gleam_panic.Expression(value),
+  )
 }
 
 // --- Console formatting ---

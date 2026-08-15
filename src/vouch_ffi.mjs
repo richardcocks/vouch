@@ -3,7 +3,7 @@
 // decisions (what counts as a test, reporting, exit codes) belong to Gleam.
 // TODO: the *_test suffix checks are duplicated here so non-test modules are
 // never imported; unify once the discovery/execution contract settles.
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { Result$Ok, Result$Error, List$Empty, List$NonEmpty } from "./gleam.mjs";
 import {
   GleamPanic$GleamPanic,
@@ -88,6 +88,21 @@ export function write_file(path, content) {
     return Result$Ok(undefined);
   } catch (error) {
     return Result$Error(String(error?.message ?? error));
+  }
+}
+
+// The source text between two byte offsets, as the compiler recorded them in
+// a panic payload. Any failure to read is an Error: source text is a nicety
+// on top of the payload, never a requirement. Byte offsets, not string
+// indices, so the slice happens before decoding.
+export function read_source(path, start, end) {
+  try {
+    if (start < 0 || end <= start) return Result$Error(undefined);
+    const bytes = readFileSync(path);
+    if (bytes.length < end) return Result$Error(undefined);
+    return Result$Ok(new TextDecoder().decode(bytes.subarray(start, end)));
+  } catch {
+    return Result$Error(undefined);
   }
 }
 

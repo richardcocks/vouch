@@ -1,6 +1,6 @@
 //// One test per outcome flavour, so a plain run shows vouch's full range:
 ////
-////   gleam test                        - 3 pass, 2 fail, 1 todo, 1 skip
+////   gleam test                        - 2 pass, 3 fail, 2 todo, 1 skip
 ////   gleam test -- --timeout=100       - slow_test also fails as a timeout
 ////   gleam test -- --filter=slow       - just the slow test
 ////   gleam test -- --format=json       - the same as a JSONL stream
@@ -26,6 +26,13 @@ pub fn slow_test() {
 /// A wrong assertion: renders left/right/operator detail.
 pub fn failing_assert_test() {
   assert playground.add(2, 2) == 5
+}
+
+/// A wrong predicate: renders the call as written, and the value behind
+/// each argument that was not written out literally.
+pub fn failing_predicate_test() {
+  let spend = 250
+  assert playground.within_budget(spend)
 }
 
 /// A failing pattern match: renders the unmatched value.

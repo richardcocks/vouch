@@ -11,6 +11,7 @@ import gleam/int
 import gleam/io
 import gleam/list
 import gleam/string
+import vouch/internal/describe
 import vouch/internal/event.{type Event}
 import vouch/internal/gleam_panic.{type GleamPanic}
 import vouch/internal/outcome.{type TestOutcome}
@@ -113,7 +114,10 @@ fn test_case(r: Case) -> String {
       <> "\" message=\""
       <> escape(p.message)
       <> "\">"
-      <> escape(p.file <> ":" <> int.to_string(p.line))
+      <> escape(string.join(
+        [describe.location(p), ..describe.panic_detail(p)],
+        "\n",
+      ))
       <> "</failure>\n    </testcase>\n"
     outcome.Failed(outcome.UnknownDetail(raw)) ->
       open

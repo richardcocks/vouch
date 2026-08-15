@@ -7,6 +7,7 @@ import gleam/io
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
+import vouch/internal/describe
 import vouch/internal/event.{type Event, type Tally}
 import vouch/internal/gleam_panic.{type GleamPanic}
 import vouch/internal/outcome.{type TestOutcome}
@@ -99,58 +100,29 @@ fn print_failures(
     _ -> {
       io.println("")
       io.println(paint(style, red, "Failures:"))
-      list.each(failures, print_failure)
+      list.each(failures, print_failure(style, _))
     }
   }
 }
 
-fn print_failure(failure: #(String, outcome.FailureDetail)) -> Nil {
+fn print_failure(
+  style: Style,
+  failure: #(String, outcome.FailureDetail),
+) -> Nil {
   let #(name, detail) = failure
   io.println("")
-  io.println("  " <> name)
+  io.println("  " <> name <> where(style, detail))
+  list.each(describe.failure(detail), fn(line) { io.println("    " <> line) })
+}
+
+/// The failure site, dimmed, on the same line as the test name so the whole
+/// report is name, place, expectation.
+fn where(style: Style, detail: outcome.FailureDetail) -> String {
   case detail {
-    outcome.PanicDetail(p) -> {
-      io.println(
-        "    "
-        <> p.message
-        <> " ("
-        <> p.file
-        <> ":"
-        <> int.to_string(p.line)
-        <> ")",
-      )
-      print_panic_detail(p)
-    }
-    outcome.UnknownDetail(raw) -> io.println("    " <> string.inspect(raw))
-    outcome.TimeoutDetail(ms) ->
-      io.println("    timed out after " <> int.to_string(ms) <> "ms")
-    outcome.ExitDetail(raw) ->
-      io.println("    test process died: " <> string.inspect(raw))
+    outcome.PanicDetail(p) ->
+      paint(style, dim, "  (" <> describe.location(p) <> ")")
+    _ -> ""
   }
-}
-
-fn print_panic_detail(p: GleamPanic) -> Nil {
-  case p.kind {
-    gleam_panic.Assert(
-      kind: gleam_panic.BinaryOperator(operator: op, left: l, right: r),
-      ..,
-    ) -> {
-      io.println("      left:  " <> expression_value(l))
-      io.println("      right: " <> expression_value(r))
-      io.println("      op:    " <> op)
-    }
-    gleam_panic.Assert(kind: gleam_panic.FunctionCall(arguments: args), ..) ->
-      list.each(args, fn(a) {
-        io.println("      arg:   " <> expression_value(a))
-      })
-    gleam_panic.LetAssert(value: v, ..) ->
-      io.println("      value: " <> string.inspect(v))
-    _ -> Nil
-  }
-}
-
-fn expression_value(e: gleam_panic.AssertedExpression) -> String {
-  gleam_panic.describe_expression(e)
 }
 
 fn print_todos(style: Style, todos: List(#(String, GleamPanic))) -> Nil {

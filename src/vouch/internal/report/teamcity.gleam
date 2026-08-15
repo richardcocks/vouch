@@ -21,6 +21,7 @@ import gleam/io
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
+import vouch/internal/describe
 import vouch/internal/event.{type Event}
 import vouch/internal/gleam_panic.{type GleamPanic}
 import vouch/internal/outcome.{type TestOutcome}
@@ -124,7 +125,7 @@ fn failure(function: String, detail: outcome.FailureDetail) -> String {
 }
 
 fn panic_failure(function: String, p: GleamPanic) -> String {
-  let where = p.file <> ":" <> int.to_string(p.line)
+  let where = describe.location(p)
   case p.kind {
     gleam_panic.Assert(
       kind: gleam_panic.BinaryOperator(operator: "==", left: l, right: r),
@@ -138,26 +139,14 @@ fn panic_failure(function: String, p: GleamPanic) -> String {
         #("actual", gleam_panic.describe_expression(l)),
         #("details", where),
       ])
-    _ -> failed(function, p.message, string.join([where, ..details(p)], "\n"))
-  }
-}
-
-/// The same operand detail the console reporter prints, as the details block
-/// TeamCity shows under a failed test.
-fn details(p: GleamPanic) -> List(String) {
-  case p.kind {
-    gleam_panic.Assert(
-      kind: gleam_panic.BinaryOperator(operator: op, left: l, right: r),
-      ..,
-    ) -> [
-      "left:  " <> gleam_panic.describe_expression(l),
-      "right: " <> gleam_panic.describe_expression(r),
-      "op:    " <> op,
-    ]
-    gleam_panic.Assert(kind: gleam_panic.FunctionCall(arguments: args), ..) ->
-      list.map(args, fn(a) { "arg:   " <> gleam_panic.describe_expression(a) })
-    gleam_panic.LetAssert(value: v, ..) -> ["value: " <> string.inspect(v)]
-    _ -> []
+    // The same expected/actual wording the console reporter prints, as the
+    // details block TeamCity shows under a failed test.
+    _ ->
+      failed(
+        function,
+        p.message,
+        string.join([where, ..describe.panic_detail(p)], "\n"),
+      )
   }
 }
 

@@ -40,6 +40,39 @@ The default, and the most visible differentiator. Requirements:
 - Failure details grouped at the end, after the progress output, so the last
   screenful is the useful one.
 
+=== Failure wording
+
+A failure is rendered as an expectation and an outcome — `Expected:` /
+`But was:`, the shape NUnit, xUnit and Jest have made universal — rather than
+as a dump of the payload's fields. The operator chooses the phrasing (`<`
+becomes "less than", `!=` becomes "anything except", `&&` names both
+operands so the short-circuited side is visible as `(not evaluated)`), which
+is what stops `<` from being reported as though it were an equality.
+
+For `==` and `!=` the left operand is taken as the actual value, matching the
+`assert actual == expected` shape tests are overwhelmingly written in. When
+the left operand is a literal and the right is not, the two are swapped: a
+literal is what a test expects, never what it computed. The payload's
+`Literal`/`Expression` distinction is what makes that decidable.
+
+Where the payload alone is too abstract to read — a pattern that did not
+match, a predicate that returned False — the byte offsets it carries are used
+to read the failing statement back off disk, so the report quotes the code:
+`a value matching Ok(port)`, `within_budget(spend) to be True`. Two
+consequences follow. First, the file may not be the one the offsets were
+recorded against (a panic from a dependency resolves its relative path
+against the *consumer's* working directory), so the statement is only used
+when the token at the recorded start position is the keyword the payload
+implies — a mismatch fails closed rather than quoting confident nonsense from
+an unrelated file. Second, reading can simply be unavailable (no read
+permission under Deno, a moved file); every kind therefore keeps wording that
+stands on the payload alone, and the quoted form is strictly an upgrade.
+
+Reporters share one implementation of this (`vouch/internal/describe`), so the
+console, the TeamCity details block and the JUnit failure body cannot drift
+apart. The JSONL stream is deliberately *not* a consumer: it carries the
+operands and operator as separate fields for machines to phrase themselves.
+
 == JSONL: `--format=json`
 
 Newline-delimited JSON, one event per line — the flag says `json` for

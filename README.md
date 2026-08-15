@@ -2,13 +2,32 @@
 
 [![CI](https://github.com/richardcocks/vouch/actions/workflows/ci.yml/badge.svg)](https://github.com/richardcocks/vouch/actions/workflows/ci.yml)
 
-A test runner for Gleam. Compatible with the gleeunit convention — swap one
-line and your existing suite runs unchanged — with the internals a test
-runner should have:
+A gleeunit compatible test runner for Gleam.
 
-- **Rich failures.** `assert` payloads decode into left/right/operator
-  detail; `let assert` shows the unmatched value; every failure carries its
-  file and line.
+- **Failures that read like sentences.** `assert` payloads decode into an
+  expected/actual report, phrased for the operator that failed — the
+  wording NUnit, xUnit and Jest trained everyone to read — instead of a
+  dump of raw operands. The payload's byte offsets are used to quote the
+  failing code back, so a predicate names itself and a `let assert` names
+  the pattern it wanted. Every failure carries its file and line.
+
+  ```
+  Failures:
+
+    playground_test.failing_assert_test  (test/playground_test.gleam:28)
+      Expected: 5
+      But was:  4
+
+    playground_test.failing_predicate_test  (test/playground_test.gleam:35)
+      Expected: playground.within_budget(spend) to be True
+      But was:  False
+        spend = 250
+
+    playground_test.failing_let_assert_test  (test/playground_test.gleam:40)
+      Expected: a value matching Ok(n)
+      But was:  Error("the port was closed")
+  ```
+
 - **Todo is an outcome, not a failure.** A test that hits `todo` in the code
   under test reports as `todo` (yellow, still exit 1): during TDD, "not
   implemented yet" reads differently from "implemented wrong". Tests blocked
@@ -54,7 +73,17 @@ functions ending in `_test`.
 Assertions need no library. `assert`, `let assert`, `panic`, and `todo`
 are language features, and vouch's rich failure output is decoded from
 the payloads the compiler emits for them — that decoding is the whole
-reason the left/right/operator detail exists.
+reason the expected/actual report exists.
+
+Because the payload carries the operator, the report says what the
+operator meant: `assert x < limit` reads `Expected: less than 10 / But
+was: 12`. Because it carries byte offsets, the report can quote the
+source: a failing predicate prints the call as you wrote it, plus the
+value behind each argument that was not a literal. Source quoting is a
+bonus on top of the payload — if the file cannot be read back (a panic
+from a dependency, a runtime without read permission) the wording falls
+back to the operands alone. No matcher library needed to get NUnit-grade
+failure messages.
 
 `gleeunit/should` is a different story. Those calls still *run* under
 vouch: they are ordinary functions that panic, so a suite that keeps

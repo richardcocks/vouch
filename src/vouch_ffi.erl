@@ -10,6 +10,7 @@
     env/1,
     redirect_diagnostics_to_stderr/0,
     write_file/2,
+    read_source/3,
     halt/1,
     file_snapshot/1,
     run_passthrough/2,
@@ -24,6 +25,22 @@ write_file(Path, Content) ->
     case file:write_file(unicode:characters_to_list(Path), Content) of
         ok -> {ok, nil};
         {error, Reason} -> {error, atom_to_binary(Reason, utf8)}
+    end.
+
+%% The source text between two byte offsets, as the compiler recorded them
+%% in a panic payload. Any failure to read is {error, nil}: source text is
+%% a nicety on top of the payload, never a requirement.
+read_source(Path, Start, End) ->
+    case Start >= 0 andalso End > Start of
+        true ->
+            case file:read_file(unicode:characters_to_list(Path)) of
+                {ok, Binary} when byte_size(Binary) >= End ->
+                    {ok, binary:part(Binary, Start, End - Start)};
+                _ ->
+                    {error, nil}
+            end;
+        false ->
+            {error, nil}
     end.
 
 now_microseconds() ->

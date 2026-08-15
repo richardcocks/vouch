@@ -17,7 +17,7 @@ pub fn playground_erlang_e2e_test() {
   assert code == 1
   assert string.contains(
     out,
-    "\"event\":\"run_end\",\"passed\":2,\"failed\":2,\"todo\":2,\"skipped\":1",
+    "\"event\":\"run_end\",\"passed\":2,\"failed\":3,\"todo\":2,\"skipped\":1",
   )
   assert string.contains(out, "\"outcome\":\"todo\"")
   assert string.contains(out, "\"site_function\":\"rate_limit\"")
@@ -39,7 +39,7 @@ pub fn playground_javascript_e2e_test() {
   assert code == 1
   assert string.contains(
     out,
-    "\"event\":\"run_end\",\"passed\":2,\"failed\":2,\"todo\":2,\"skipped\":1",
+    "\"event\":\"run_end\",\"passed\":2,\"failed\":3,\"todo\":2,\"skipped\":1",
   )
 }
 
@@ -56,7 +56,7 @@ pub fn playground_timeout_e2e_test() {
   assert string.contains(out, "\"timeout_ms\":100")
   assert string.contains(
     out,
-    "\"event\":\"run_end\",\"passed\":1,\"failed\":3,\"todo\":2,\"skipped\":1",
+    "\"event\":\"run_end\",\"passed\":1,\"failed\":4,\"todo\":2,\"skipped\":1",
   )
 }
 
@@ -73,7 +73,7 @@ pub fn playground_parallel_e2e_test() {
   assert code == 1
   assert string.contains(
     out,
-    "\"event\":\"run_end\",\"passed\":2,\"failed\":2,\"todo\":2,\"skipped\":1",
+    "\"event\":\"run_end\",\"passed\":2,\"failed\":3,\"todo\":2,\"skipped\":1",
   )
   assert string.contains(out, "\"site_function\":\"rate_limit\"")
 }

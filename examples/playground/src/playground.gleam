@@ -5,6 +5,10 @@ pub fn add(a: Int, b: Int) -> Int {
   a + b
 }
 
+pub fn within_budget(spend: Int) -> Bool {
+  spend <= 100
+}
+
 pub fn rate_limit(_requests: Int) -> Bool {
   todo as "rate limiting is not implemented yet"
 }

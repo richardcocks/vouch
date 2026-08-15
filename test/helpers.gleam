@@ -22,6 +22,19 @@ pub fn assert_call_fails() -> Nil {
   assert is_even(3)
 }
 
+/// An argument that is a name rather than a literal: the report has to show
+/// both what the call site wrote and what it evaluated to.
+pub fn assert_call_with_binding_fails() -> Nil {
+  let n = 3
+  assert is_even(n)
+}
+
+/// An asserted expression that is neither a comparison nor a call.
+pub fn assert_expression_fails() -> Nil {
+  let ready = False
+  assert ready
+}
+
 pub fn let_assert_fails() -> Nil {
   let assert Ok(_) = failing_result()
   Nil
