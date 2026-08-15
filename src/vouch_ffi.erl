@@ -266,20 +266,16 @@ drain_through(Port) ->
 sleep_ms(Ms) ->
     receive after Ms -> nil end.
 
-%% Quitting the watch loop. A foreground BEAM turns Ctrl+C into the
-%% emulator's BREAK menu rather than an exit, so two paths are installed:
-%% - On Unix-like systems SIGINT is taken over (os:set_signal is not
-%%   supported on Windows, hence the catch) and vouch_signal_handler
-%%   halts cleanly on Ctrl+C.
-%% - Everywhere, a stdin listener quits on "q" + Enter. The inner runs
-%%   never contend for stdin — their ports get pipes. eof means stdin is
-%%   not interactive (piped or closed), so the listener just retires
-%%   rather than treating it as a quit.
+%% Quitting the watch loop: a stdin listener that halts on "q" + Enter.
+%% This is the only clean quit the BEAM allows a long-running foreground
+%% program: SIGINT belongs to the emulator's break handler and cannot be
+%% taken over (os:set_signal(sigint, handle) is badarg), and booting with
+%% +Bd/+Bi merely turns Ctrl+C into a no-op, so Ctrl+C either opens the
+%% BREAK menu or does nothing. The inner runs never contend for stdin —
+%% their ports get pipes. eof means stdin is not interactive (piped or
+%% closed), so the listener just retires rather than treating it as a
+%% quit.
 install_quit_hooks() ->
-    catch begin
-        os:set_signal(sigint, handle),
-        gen_event:add_handler(erl_signal_server, vouch_signal_handler, [])
-    end,
     spawn(fun quit_listener/0),
     nil.
 
