@@ -17,7 +17,9 @@ runner should have:
   processes (e.g. a gen_server callback) are recognised too.
 - **Machine-readable output.** `--format=json` emits a JSONL event stream;
   `--junit=path` writes JUnit XML alongside the console output for CI test
-  reporting. No other general-purpose Gleam runner offers either.
+  reporting; `--format=teamcity` streams TeamCity service messages for CI
+  servers that read results from stdout as they happen. No other
+  general-purpose Gleam runner offers any of these.
 - **Process isolation on the BEAM.** Each test runs in its own monitored
   process: crashes are contained, linked-process deaths are attributed, and
   a hung test becomes a timeout failure instead of hanging `gleam test`
@@ -56,6 +58,7 @@ panic).
 gleam test                              # run everything
 gleam test -- --filter=parser           # tests whose module.function contains "parser"
 gleam test -- --format=json             # JSONL event stream on stdout
+gleam test -- --format=teamcity         # TeamCity service messages on stdout
 gleam test -- --junit=report.xml        # also write JUnit XML for CI
 gleam test -- --timeout=1000            # per-test timeout in ms (Erlang target)
 gleam test -- --parallel                # concurrent tests (Erlang target); =n sets workers

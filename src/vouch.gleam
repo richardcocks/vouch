@@ -7,6 +7,7 @@ import vouch/internal/config
 import vouch/internal/report/console
 import vouch/internal/report/jsonl
 import vouch/internal/report/junit
+import vouch/internal/report/teamcity
 import vouch/internal/reporter
 import vouch/internal/runner
 import vouch/internal/term
@@ -50,6 +51,20 @@ fn run_tests(args: List(String)) -> Nil {
         config.Json, Some(path) ->
           runner.run(
             reporter.pair(jsonl.reporter(), junit.reporter(path)),
+            cfg.filter,
+            cfg.timeout_ms,
+            cfg.parallel,
+          )
+        config.TeamCity, None ->
+          runner.run(
+            teamcity.reporter(),
+            cfg.filter,
+            cfg.timeout_ms,
+            cfg.parallel,
+          )
+        config.TeamCity, Some(path) ->
+          runner.run(
+            reporter.pair(teamcity.reporter(), junit.reporter(path)),
             cfg.filter,
             cfg.timeout_ms,
             cfg.parallel,

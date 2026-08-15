@@ -60,7 +60,7 @@ The v1 events are `run_start` (total, discovered), `test_start`,
 unstable in v1*; stabilising it is a v2 commitment, made once real
 consumers exist.
 
-== JUnit XML: `--format=junit`
+== JUnit XML: `--junit=path`
 
 The format every CI system consumes (GitHub Actions annotations, GitLab test
 reports, Jenkins). No general-purpose Gleam runner emits it today; this is the
@@ -76,6 +76,30 @@ headline CI feature.
 
 Written to a file (path via flag) rather than stdout, so it can coexist with
 console output in CI.
+
+== TeamCity service messages: `--format=teamcity`
+
+Emitted on stdout as the run progresses, with no file in between: the CI
+server reads results straight out of the build log. TeamCity has consumed this
+format since 2006 and JetBrains IDEs read it too, which makes it the cheapest
+possible integration — no schema, no artifact upload step, and results appear
+while the run is still going.
+
+- One `testSuiteStarted`/`testSuiteFinished` pair per test module; a
+  `testStarted`/`testFinished` pair per test, carrying its duration in
+  milliseconds.
+- Outcome mapping per @sec-test-model: Fail and Todo → `testFailed` (Todo
+  keeps its site in the message), Skipped → `testIgnored`. A failed `assert`
+  on `==` becomes `type='comparisonFailure'` with `expected` and `actual`,
+  which is what makes TeamCity render its side-by-side diff; other operators
+  stay plain failures, because a diff of `<` operands is nonsense.
+- Both halves of a test's pair are emitted together at `TestResult` rather
+  than split across `TestStart` and `TestResult`. Under `--parallel` tests
+  overlap, and TeamCity requires pairs on a single flow to nest rather than
+  interleave; closing each pair immediately keeps the stream valid without
+  flow ids, and nothing is lost because the duration is carried explicitly.
+- Zero tests emits a `buildProblem`, so the non-zero exit is backed by a
+  stated reason rather than an empty, unexplained red step.
 
 == Exit codes
 

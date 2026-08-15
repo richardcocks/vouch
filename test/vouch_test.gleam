@@ -16,6 +16,7 @@ import vouch/internal/outcome
 import vouch/internal/report/console
 import vouch/internal/report/jsonl
 import vouch/internal/report/junit
+import vouch/internal/report/teamcity
 import vouch/internal/runner
 
 pub fn main() -> Nil {
@@ -285,6 +286,11 @@ pub fn config_format_and_filter_test() {
     ))
 }
 
+pub fn config_teamcity_format_test() {
+  let assert Ok(config.Config(format: config.TeamCity, ..)) =
+    config.from_args(["--format=teamcity"])
+}
+
 pub fn config_parallel_test() {
   let assert Ok(config.Config(parallel: config.AutoParallel, ..)) =
     config.from_args(["--parallel"])
@@ -376,6 +382,125 @@ pub fn junit_escapes_xml_test() {
   ]
   let xml = junit.render(results, 0)
   assert string.contains(xml, "message=\"a &lt; b &amp; &quot;c&quot;\"")
+}
+
+// --- TeamCity service messages ---
+
+pub fn teamcity_run_test() {
+  let p = sample_todo_panic()
+  let #(state, start) = teamcity.step(None, event.RunStart(3, 24))
+  assert start == ["##teamcity[testCount count='3']"]
+
+  let #(state, passing) =
+    teamcity.step(
+      state,
+      event.TestResult("mod_a_test", "ok_test", outcome.Pass, 1500),
+    )
+  assert passing
+    == [
+      "##teamcity[testSuiteStarted name='mod_a_test']",
+      "##teamcity[testStarted name='ok_test']",
+      "##teamcity[testFinished name='ok_test' duration='1']",
+    ]
+
+  // Same module: the open suite is reused rather than reopened.
+  let #(state, skipped) =
+    teamcity.step(
+      state,
+      event.TestResult("mod_a_test", "stub_test", outcome.Skipped(p), 0),
+    )
+  assert skipped
+    == [
+      "##teamcity[testStarted name='stub_test']",
+      "##teamcity[testIgnored name='stub_test' message='m']",
+      "##teamcity[testFinished name='stub_test' duration='0']",
+    ]
+
+  // New module: the previous suite closes before the next one opens.
+  let #(state, blocked) =
+    teamcity.step(
+      state,
+      event.TestResult("mod_b_test", "blocked_test", outcome.Todo(p), 0),
+    )
+  assert blocked
+    == [
+      "##teamcity[testSuiteFinished name='mod_a_test']",
+      "##teamcity[testSuiteStarted name='mod_b_test']",
+      "##teamcity[testStarted name='blocked_test']",
+      "##teamcity[testFailed name='blocked_test' "
+        <> "message='todo at some_module.some_function:1' details='m']",
+      "##teamcity[testFinished name='blocked_test' duration='0']",
+    ]
+
+  let #(_, ending) =
+    teamcity.step(
+      state,
+      event.RunEnd(event.Tally(passed: 1, failed: 0, todos: 1, skipped: 1), 0),
+    )
+  assert ending == ["##teamcity[testSuiteFinished name='mod_b_test']"]
+}
+
+/// Zero tests is a failure vouch states out loud, so the exit code is backed
+/// by a build problem rather than an empty, unexplained red step.
+pub fn teamcity_no_tests_test() {
+  let #(_, lines) =
+    teamcity.step(
+      None,
+      event.RunEnd(event.Tally(passed: 0, failed: 0, todos: 0, skipped: 0), 0),
+    )
+  assert lines
+    == [
+      "##teamcity[buildProblem description='vouch ran no tests' "
+      <> "identity='vouch_no_tests']",
+    ]
+}
+
+/// A failing `assert ==` carries its operands as a comparisonFailure, which
+/// is what makes TeamCity render its diff view.
+pub fn teamcity_comparison_failure_test() {
+  let assert Error(raw) = runner.catch_panic(helpers.assert_fails)
+  let assert Ok(p) = gleam_panic.from_dynamic(raw)
+  let #(_, lines) =
+    teamcity.step(
+      None,
+      event.TestResult(
+        "m_test",
+        "x_test",
+        outcome.Failed(outcome.PanicDetail(p)),
+        0,
+      ),
+    )
+  let joined = string.join(lines, "\n")
+  assert string.contains(joined, "type='comparisonFailure'")
+  // helpers.assert_fails is `assert 1 + 1 == 3`.
+  assert string.contains(joined, "actual='2'")
+  assert string.contains(joined, "expected='3'")
+}
+
+pub fn teamcity_escaping_test() {
+  let p =
+    gleam_panic.GleamPanic(
+      message: "it's [broken|odd]\nline two",
+      file: "f",
+      module: "m",
+      function: "f",
+      line: 1,
+      kind: gleam_panic.Panic,
+    )
+  let #(_, lines) =
+    teamcity.step(
+      None,
+      event.TestResult(
+        "m_test",
+        "x_test",
+        outcome.Failed(outcome.PanicDetail(p)),
+        0,
+      ),
+    )
+  assert string.contains(
+    string.join(lines, "\n"),
+    "message='it|'s |[broken||odd|]|nline two'",
+  )
 }
 
 pub fn jsonl_todo_result_test() {

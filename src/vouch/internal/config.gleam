@@ -7,6 +7,7 @@ import gleam/string
 pub type Format {
   Console
   Json
+  TeamCity
 }
 
 pub type ColorChoice {
@@ -58,6 +59,8 @@ fn parse(args: List(String), config: Config) -> Result(Config, String) {
     ["--format=console", ..rest] ->
       parse(rest, Config(..config, format: Console))
     ["--format=json", ..rest] -> parse(rest, Config(..config, format: Json))
+    ["--format=teamcity", ..rest] ->
+      parse(rest, Config(..config, format: TeamCity))
     ["--filter=" <> pattern, ..rest] ->
       case config.filter {
         None -> parse(rest, Config(..config, filter: Some(pattern)))
@@ -105,6 +108,9 @@ fn usage(problem: String) -> String {
   <> "\n\nUsage: gleam test -- [options]\n"
   <> "  --filter=text   run only tests whose module.function contains text\n"
   <> "  --format=json   emit a JSONL event stream instead of console output\n"
+  <> "  --format=teamcity\n"
+  <> "                  emit TeamCity service messages instead of console\n"
+  <> "                  output, for CI servers that read them from stdout\n"
   <> "  --junit=path    also write a JUnit XML report to the given file\n"
   <> "  --timeout=ms    per-test timeout on the Erlang target (default 5000)\n"
   <> "  --parallel[=n]  run tests concurrently on the Erlang target with n\n"

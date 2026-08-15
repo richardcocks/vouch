@@ -14,7 +14,8 @@ targets, and exercised end-to-end:
   including the loud zero-tests and nothing-matched-the-filter cases
 - `--filter=text` (bare positional arguments are rejected with a hint)
 - JSONL event stream (`--format=json`) and JUnit XML (`--junit=path`,
-  running alongside the console via the reporter pair combinator)
+  running alongside the console via the reporter pair combinator);
+  TeamCity service messages (`--format=teamcity`) followed post-v1
 - Process-per-test isolation and `--timeout=ms` on the BEAM; BEAM
   diagnostics routed to stderr so stdout stays machine-clean
 - `examples/playground` — a path-dependency consumer with one test per
@@ -135,3 +136,24 @@ Decisions recorded from the build:
   instant re-runs are not achievable from outside the toolchain. A
   compile error is just a red cycle: the inner run exits non-zero with
   the compiler's diagnostics on stderr, and the watcher keeps waiting.
+
+== TeamCity service messages (shipped post-v1)
+
+`--format=teamcity`, detailed in @sec-output. The event stream was already
+the whole job: the reporter is a pure map from events to lines, with the
+open suite as its only state.
+
+Decisions recorded from the build:
+
+- Both halves of a test's `testStarted`/`testFinished` pair are emitted at
+  `TestResult`. `TestStart` is emitted at admission under `--parallel`, so
+  pairs opened there would interleave — which TeamCity forbids on a single
+  flow. Emitting the pair closed sidesteps flow ids entirely, and costs
+  nothing because `TestResult` already carries the duration.
+- Todo is `testFailed`, matching JUnit and the exit code. TeamCity's
+  `testIgnored` does not fail a build, so mapping Todo there would render
+  green while vouch exits 1.
+- `comparisonFailure` only for `==`. TeamCity's diff view over the operands
+  of `<` or `!=` would assert a relationship the operator does not have.
+- Zero tests emits `buildProblem`, so the loud-failure rule is legible in
+  the UI and not just in the exit code.
