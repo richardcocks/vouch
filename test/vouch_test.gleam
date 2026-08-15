@@ -168,6 +168,38 @@ pub fn isolated_pass_and_panic_test() {
   assert p.message == "helper panicked"
 }
 
+@target(erlang)
+/// Two 300ms tests awaited together must finish well under the 600ms a
+/// sequential run would need: proof the start/await pair actually
+/// overlaps execution. The 550ms bound leaves slack for slow CI runners
+/// while staying unambiguous.
+pub fn parallel_tests_overlap_test() {
+  let t0 = monotonic_microseconds()
+  let a = runner.start_test("helpers", "sleeps_briefly", 5000)
+  let b = runner.start_test("helpers", "sleeps_briefly", 5000)
+  let #(invocation_a, duration_a) = runner.await_test(a)
+  let #(invocation_b, duration_b) = runner.await_test(b)
+  let elapsed_ms = { monotonic_microseconds() - t0 } / 1000
+  assert invocation_a == outcome.Passed
+  assert invocation_b == outcome.Passed
+  assert duration_a >= 300_000
+  assert duration_b >= 300_000
+  assert elapsed_ms < 550
+}
+
+@target(erlang)
+/// The parallel path must keep per-test timeout semantics: a started test
+/// that outlives its timeout comes back TimedOut from await.
+pub fn parallel_test_times_out_test() {
+  let handle = runner.start_test("helpers", "sleeps_forever", 100)
+  let #(invocation, _) = runner.await_test(handle)
+  assert invocation == outcome.TimedOut(100)
+}
+
+@target(erlang)
+@external(erlang, "vouch_ffi", "now_microseconds")
+fn monotonic_microseconds() -> Int
+
 // --- Tally and exit codes ---
 
 fn sample_todo_panic() -> gleam_panic.GleamPanic {
@@ -224,6 +256,7 @@ pub fn config_defaults_test() {
       junit: None,
       timeout_ms: config.default_timeout_ms,
       color: config.Auto,
+      parallel: config.Sequential,
     ))
 }
 
@@ -235,6 +268,7 @@ pub fn config_format_and_filter_test() {
       junit: None,
       timeout_ms: config.default_timeout_ms,
       color: config.Auto,
+      parallel: config.Sequential,
     ))
   assert config.from_args([
       "--filter=decode",
@@ -247,7 +281,17 @@ pub fn config_format_and_filter_test() {
       junit: Some("report.xml"),
       timeout_ms: 250,
       color: config.Auto,
+      parallel: config.Sequential,
     ))
+}
+
+pub fn config_parallel_test() {
+  let assert Ok(config.Config(parallel: config.AutoParallel, ..)) =
+    config.from_args(["--parallel"])
+  let assert Ok(config.Config(parallel: config.Workers(4), ..)) =
+    config.from_args(["--parallel=4"])
+  let assert Error(_) = config.from_args(["--parallel=0"])
+  let assert Error(_) = config.from_args(["--parallel=lots"])
 }
 
 pub fn config_color_test() {

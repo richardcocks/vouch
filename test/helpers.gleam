@@ -39,6 +39,13 @@ pub fn sleeps_forever() -> Nil {
   sleep(60_000)
 }
 
+// Long enough that two sequential runs are clearly distinguishable from
+// two overlapping ones, short enough not to drag the suite.
+@target(erlang)
+pub fn sleeps_briefly() -> Nil {
+  sleep(300)
+}
+
 @target(erlang)
 pub fn crashes_linked() -> Nil {
   spawn_link(fn() { panic as "crash in linked process" })

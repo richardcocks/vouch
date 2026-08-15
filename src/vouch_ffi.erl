@@ -14,7 +14,10 @@
     file_snapshot/1,
     run_passthrough/2,
     sleep_ms/1,
-    install_quit_hooks/0
+    install_quit_hooks/0,
+    start_test/3,
+    await_test/1,
+    schedulers_online/0
 ]).
 
 write_file(Path, Content) ->
@@ -107,6 +110,34 @@ run_test(ModuleName, FunctionName, TimeoutMs) ->
         {timed_out, TimeoutMs}
     end.
 
+
+%% Parallel execution: start one test without blocking on it. The spawned
+%% middleman runs the same run_test/3 as the sequential path — identical
+%% isolation and timeout semantics — measures the duration, and posts the
+%% result back tagged with a unique ref. The monitor covers the
+%% theoretical case of the middleman dying before it reports.
+start_test(Module, Function, TimeoutMs) ->
+    Self = self(),
+    Ref = make_ref(),
+    {_Pid, MonRef} = spawn_monitor(fun() ->
+        Started = erlang:monotonic_time(microsecond),
+        Result = run_test(Module, Function, TimeoutMs),
+        Duration = erlang:monotonic_time(microsecond) - Started,
+        Self ! {vouch_parallel, Ref, Result, Duration}
+    end),
+    {Ref, MonRef}.
+
+await_test({Ref, MonRef}) ->
+    receive
+        {vouch_parallel, Ref, Result, Duration} ->
+            erlang:demonitor(MonRef, [flush]),
+            {Result, Duration};
+        {'DOWN', MonRef, process, _Pid, Reason} ->
+            {{died, Reason}, 0}
+    end.
+
+schedulers_online() ->
+    erlang:system_info(schedulers_online).
 
 %% Call a function, capturing anything it throws. The raw reason is returned
 %% for Gleam-side decoding; a Gleam panic's reason is a map tagged

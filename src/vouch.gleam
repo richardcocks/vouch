@@ -33,6 +33,7 @@ fn run_tests(args: List(String)) -> Nil {
             console.reporter(cfg.filter, color),
             cfg.filter,
             cfg.timeout_ms,
+            cfg.parallel,
           )
         config.Console, Some(path) ->
           runner.run(
@@ -42,14 +43,16 @@ fn run_tests(args: List(String)) -> Nil {
             ),
             cfg.filter,
             cfg.timeout_ms,
+            cfg.parallel,
           )
         config.Json, None ->
-          runner.run(jsonl.reporter(), cfg.filter, cfg.timeout_ms)
+          runner.run(jsonl.reporter(), cfg.filter, cfg.timeout_ms, cfg.parallel)
         config.Json, Some(path) ->
           runner.run(
             reporter.pair(jsonl.reporter(), junit.reporter(path)),
             cfg.filter,
             cfg.timeout_ms,
+            cfg.parallel,
           )
       }
     }

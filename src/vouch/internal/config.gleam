@@ -15,6 +15,16 @@ pub type ColorChoice {
   Never
 }
 
+/// Sequential is the default: tests that share external resources
+/// (registered processes, files, ports) are not parallel-safe by
+/// convention, so concurrency is opt-in. AutoParallel sizes the worker
+/// pool to the scheduler count at runtime.
+pub type Parallelism {
+  Sequential
+  AutoParallel
+  Workers(Int)
+}
+
 pub type Config {
   Config(
     format: Format,
@@ -22,6 +32,7 @@ pub type Config {
     junit: Option(String),
     timeout_ms: Int,
     color: ColorChoice,
+    parallel: Parallelism,
   )
 }
 
@@ -36,6 +47,7 @@ pub fn from_args(args: List(String)) -> Result(Config, String) {
       junit: None,
       timeout_ms: default_timeout_ms,
       color: Auto,
+      parallel: Sequential,
     ),
   )
 }
@@ -62,6 +74,16 @@ fn parse(args: List(String), config: Config) -> Result(Config, String) {
         Error(Nil) ->
           Error(usage("--timeout expects milliseconds, got: " <> value))
       }
+    ["--parallel", ..rest] ->
+      parse(rest, Config(..config, parallel: AutoParallel))
+    ["--parallel=" <> value, ..rest] ->
+      case int.parse(value) {
+        Ok(n) if n >= 1 -> parse(rest, Config(..config, parallel: Workers(n)))
+        _ ->
+          Error(usage(
+            "--parallel expects a worker count of at least 1, got: " <> value,
+          ))
+      }
     [arg, ..] ->
       case string.starts_with(arg, "-") {
         True -> Error(usage("unknown option: " <> arg))
@@ -85,6 +107,8 @@ fn usage(problem: String) -> String {
   <> "  --format=json   emit a JSONL event stream instead of console output\n"
   <> "  --junit=path    also write a JUnit XML report to the given file\n"
   <> "  --timeout=ms    per-test timeout on the Erlang target (default 5000)\n"
+  <> "  --parallel[=n]  run tests concurrently on the Erlang target with n\n"
+  <> "                  workers (default: one per scheduler)\n"
   <> "  --color=mode    console colour: auto (default), always, never;\n"
   <> "                  auto respects NO_COLOR and non-TTY output\n"
   <> "\n"

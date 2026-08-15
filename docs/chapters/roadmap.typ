@@ -35,9 +35,6 @@ by real use during development.
   include tests returning a result/description type, or a registration path
   coexisting with plain convention tests so suites migrate incrementally.
   Decide once, with v1 usage data.
-- *Parallel execution* — process-per-test makes it nearly free on the BEAM;
-  deterministic sequential output shipped first, parallelism becomes a flag
-  once reporting handles interleaving.
 - *Published outcome SPI* for qcheck/birdie integration — the internal
   outcome type is designed as if it will be published, but publishing is a
   stability commitment (SPIs break every implementer when they change) made
@@ -49,6 +46,37 @@ by real use during development.
   cost of a dependency.
 - *Snapshot testing, TAP output* — v2+ if demanded.
 - *EUnit `.erl` compat* — never; see @sec-compatibility.
+
+== Parallel execution (shipped post-v1)
+
+`--parallel[=n]` on the Erlang target, opt-in (bare `--parallel` sizes the
+pool to the scheduler count). Process-per-test isolation made execution
+nearly free, as planned; the design work was reporting, resolved by not
+interleaving it at all: a sliding window admits up to _n_ tests, each
+started by a middleman process that runs the same `run_test` as the
+sequential path (identical isolation and timeout semantics, duration
+measured at the test), and the runner awaits the *oldest* in-flight test
+before admitting more. Results therefore arrive at the reporters in
+discovery order — the console, JSONL, and JUnit folds are untouched —
+while execution overlaps behind the window. A slow head test lets the
+rest of the window drain without refilling: a little throughput traded
+for a deterministic event stream.
+
+Decisions recorded from the build:
+
+- Sequential stays the default. Convention-discovered tests promise
+  nothing about sharing registered names, ets tables, files, or ports;
+  making concurrency opt-in keeps existing suites correct by default.
+- `TestStart` events are emitted at admission (when the test actually
+  starts), so a JSONL consumer sees starts and results interleave; every
+  event carries its test identity, so the stream stays self-describing.
+- On JavaScript `--parallel` warns and does nothing — single-threaded,
+  same honesty rule as `--timeout`.
+- The e2e suite runs the playground under `--parallel` and asserts the
+  outcome counts match the sequential runs; vouch's own suite proves
+  overlap directly with two 300ms fixtures awaited together under a
+  sequential-impossible deadline, and proves the timeout survives the
+  parallel path.
 
 == Watch mode (shipped post-v1)
 

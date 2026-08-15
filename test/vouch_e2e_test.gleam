@@ -61,6 +61,24 @@ pub fn playground_timeout_e2e_test() {
 }
 
 @target(erlang)
+/// A parallel run must classify identically to the sequential runs above:
+/// same outcome counts, same exit code, results still present per test.
+pub fn playground_parallel_e2e_test() {
+  let assert Ok(#(code, out)) =
+    run_command(
+      "gleam",
+      ["test", "--", "--format=json", "--parallel"],
+      "examples/playground",
+    )
+  assert code == 1
+  assert string.contains(
+    out,
+    "\"event\":\"run_end\",\"passed\":2,\"failed\":2,\"todo\":2,\"skipped\":1",
+  )
+  assert string.contains(out, "\"site_function\":\"rate_limit\"")
+}
+
+@target(erlang)
 fn all_json_objects(lines: List(String)) -> Bool {
   case lines {
     [] -> True

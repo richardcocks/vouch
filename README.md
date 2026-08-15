@@ -58,6 +58,7 @@ gleam test -- --filter=parser           # tests whose module.function contains "
 gleam test -- --format=json             # JSONL event stream on stdout
 gleam test -- --junit=report.xml        # also write JUnit XML for CI
 gleam test -- --timeout=1000            # per-test timeout in ms (Erlang target)
+gleam test -- --parallel                # concurrent tests (Erlang target); =n sets workers
 gleam test -- --color=never             # console colour: auto | always | never
 gleam run -m vouch -- watch             # rerun the suite on file change
 ```
@@ -88,10 +89,15 @@ cannot be reclaimed by a running program, so `q` is the clean exit.
 ## Target differences
 
 Both targets (Erlang and JavaScript) are supported from the same suite.
-On Erlang, tests run in isolated processes with timeouts. On JavaScript,
-tests run sequentially in-process: async test functions are awaited, but a
-test that never resolves cannot be interrupted and `--timeout` has no
-effect (vouch says so rather than pretending).
+On Erlang, tests run in isolated processes with timeouts, and `--parallel`
+runs them concurrently (`--parallel=n` sets the worker count; bare
+`--parallel` uses one per scheduler) while still reporting results in
+deterministic discovery order. Sequential remains the default: tests that
+share registered processes, files, or ports are not parallel-safe by
+convention, so concurrency is opt-in. On JavaScript, tests run
+sequentially in-process: async test functions are awaited, but a test
+that never resolves cannot be interrupted, and `--timeout` and
+`--parallel` have no effect (vouch says so rather than pretending).
 
 ## Not supported
 

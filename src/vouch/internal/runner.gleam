@@ -86,7 +86,12 @@ fn now_microseconds() -> Int
 // whole loop is Gleam.
 
 @target(erlang)
-pub fn run(rep: Reporter(s), filter: Option(String), timeout_ms: Int) -> Nil {
+pub fn run(
+  rep: Reporter(s),
+  filter: Option(String),
+  timeout_ms: Int,
+  parallel: config.Parallelism,
+) -> Nil {
   redirect_diagnostics_to_stderr()
   let started = now_microseconds()
   let candidates =
@@ -113,20 +118,97 @@ pub fn run(rep: Reporter(s), filter: Option(String), timeout_ms: Int) -> Nil {
       rep.init,
       event.RunStart(list.length(tests), list.length(candidates)),
     )
-  let #(state, outcomes) =
-    list.fold(tests, #(state, []), fn(acc, test_case) {
-      let #(state, outcomes) = acc
-      let #(module, function) = test_case
-      let state = rep.handle(state, event.TestStart(module, function))
-      let test_started = now_microseconds()
-      let invocation = run_in_process(module, function, timeout_ms)
-      let duration = now_microseconds() - test_started
-      let out = outcome.classify(module, function, invocation)
-      let state =
-        rep.handle(state, event.TestResult(module, function, out, duration))
-      #(state, [out, ..outcomes])
-    })
+  let #(state, outcomes) = case workers(parallel) {
+    1 -> run_sequential(rep, state, tests, timeout_ms)
+    n -> run_window(rep, tests, [], 0, state, [], timeout_ms, n)
+  }
   finish(rep, state, list.reverse(outcomes), now_microseconds() - started)
+}
+
+@target(erlang)
+fn workers(parallel: config.Parallelism) -> Int {
+  case parallel {
+    config.Sequential -> 1
+    config.Workers(n) -> n
+    config.AutoParallel -> schedulers_online()
+  }
+}
+
+@target(erlang)
+fn run_sequential(
+  rep: Reporter(s),
+  state: s,
+  tests: List(#(String, String)),
+  timeout_ms: Int,
+) -> #(s, List(TestOutcome)) {
+  list.fold(tests, #(state, []), fn(acc, test_case) {
+    let #(state, outcomes) = acc
+    let #(module, function) = test_case
+    let state = rep.handle(state, event.TestStart(module, function))
+    let test_started = now_microseconds()
+    let invocation = run_in_process(module, function, timeout_ms)
+    let duration = now_microseconds() - test_started
+    let out = outcome.classify(module, function, invocation)
+    let state =
+      rep.handle(state, event.TestResult(module, function, out, duration))
+    #(state, [out, ..outcomes])
+  })
+}
+
+@target(erlang)
+/// A sliding window over the test list: admit tests (oldest slot first)
+/// until `workers` are in flight, then await the oldest before admitting
+/// more. Results are reported in discovery order — identical to the
+/// sequential stream — while execution overlaps. Awaiting the oldest
+/// means a slow head lets the rest of the window drain without refilling,
+/// which trades a little throughput for deterministic reporting.
+fn run_window(
+  rep: Reporter(s),
+  pending: List(#(String, String)),
+  running: List(#(String, String, TestHandle)),
+  running_count: Int,
+  state: s,
+  outcomes: List(TestOutcome),
+  timeout_ms: Int,
+  workers: Int,
+) -> #(s, List(TestOutcome)) {
+  case pending {
+    [next, ..rest] if running_count < workers -> {
+      let #(module, function) = next
+      let state = rep.handle(state, event.TestStart(module, function))
+      let handle = start_test(module, function, timeout_ms)
+      run_window(
+        rep,
+        rest,
+        list.append(running, [#(module, function, handle)]),
+        running_count + 1,
+        state,
+        outcomes,
+        timeout_ms,
+        workers,
+      )
+    }
+    _ ->
+      case running {
+        [] -> #(state, outcomes)
+        [#(module, function, handle), ..running_rest] -> {
+          let #(invocation, duration) = await_test(handle)
+          let out = outcome.classify(module, function, invocation)
+          let state =
+            rep.handle(state, event.TestResult(module, function, out, duration))
+          run_window(
+            rep,
+            pending,
+            running_rest,
+            running_count - 1,
+            state,
+            [out, ..outcomes],
+            timeout_ms,
+            workers,
+          )
+        }
+      }
+  }
 }
 
 @target(erlang)
@@ -158,6 +240,30 @@ pub fn run_in_process(
   timeout_ms: Int,
 ) -> outcome.Invocation
 
+/// An in-flight test started by `start_test`: created and consumed only by
+/// the FFI.
+pub type TestHandle
+
+@target(erlang)
+/// Start one test without waiting for it. The spawned middleman runs the
+/// same run_test as the sequential path — identical isolation and timeout
+/// semantics — and `await_test` collects the invocation and its duration
+/// in microseconds. Public so the suite can prove concurrency directly.
+@external(erlang, "vouch_ffi", "start_test")
+pub fn start_test(
+  module: String,
+  function: String,
+  timeout_ms: Int,
+) -> TestHandle
+
+@target(erlang)
+@external(erlang, "vouch_ffi", "await_test")
+pub fn await_test(handle: TestHandle) -> #(outcome.Invocation, Int)
+
+@target(erlang)
+@external(erlang, "vouch_ffi", "schedulers_online")
+fn schedulers_online() -> Int
+
 // On the JavaScript target dynamic import and test invocation are async, so
 // sequencing lives in the FFI, which threads reporter state through Gleam
 // callbacks. The state tuple is (reporter state, outcomes so far, start time
@@ -167,12 +273,24 @@ pub fn run_in_process(
 // timeout does not apply. A documented target difference — but asking for a
 // non-default timeout here deserves a loud note rather than silence.
 @target(javascript)
-pub fn run(rep: Reporter(s), filter: Option(String), timeout_ms: Int) -> Nil {
+pub fn run(
+  rep: Reporter(s),
+  filter: Option(String),
+  timeout_ms: Int,
+  parallel: config.Parallelism,
+) -> Nil {
   case timeout_ms == config.default_timeout_ms {
     True -> Nil
     False ->
       io.println_error(
         "vouch: --timeout has no effect on the JavaScript target — tests run in-process and cannot be interrupted",
+      )
+  }
+  case parallel {
+    config.Sequential -> Nil
+    _ ->
+      io.println_error(
+        "vouch: --parallel has no effect on the JavaScript target — tests run in-process on a single thread",
       )
   }
   let started = now_microseconds()
