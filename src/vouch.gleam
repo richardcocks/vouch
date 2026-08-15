@@ -1,11 +1,8 @@
-//// vouch — a gleeunit-compatible test runner for Gleam.
+//// vouch: a gleeunit compatible test runner for Gleam.
 ////
-//// Tests are discovered by the ecosystem convention — modules under
-//// `test/` ending in `_test`, public zero-arity functions ending in
-//// `_test` — and run with expected/actual failure reports decoded from
-//// `assert` payloads, todo as its own outcome, JSONL/TeamCity/JUnit
-//// output, and process isolation on the Erlang target. The README has the
-//// full tour and every command-line option.
+//// Tests are discovered as usual, by files in `test/` ending in `_test`
+//// public zero-arity functions ending in `_test` 
+//// See README.md for more information.
 
 import argv
 import gleam/io
