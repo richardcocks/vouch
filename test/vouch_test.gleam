@@ -521,6 +521,10 @@ pub fn config_rejects_bad_args_test() {
   let assert Error(_) = config.from_args(["--nope"])
   let assert Error(_) = config.from_args(["--color=sometimes"])
   let assert Error(_) = config.from_args(["--timeout=abc"])
+  // Zero kills every test instantly; a negative value is a timeout_value
+  // crash inside the Erlang receive. Both are usage errors, not runs.
+  let assert Error(_) = config.from_args(["--timeout=0"])
+  let assert Error(_) = config.from_args(["--timeout=-5"])
   let assert Error(_) = config.from_args(["--filter=a", "--filter=b"])
   // Bare positional arguments are errors, pointing at --filter.
   let assert Error(message) = config.from_args(["timeout=1"])
@@ -591,6 +595,26 @@ pub fn junit_escapes_xml_test() {
   ]
   let xml = junit.render(results, 0)
   assert string.contains(xml, "message=\"a &lt; b &amp; &quot;c&quot;\"")
+}
+
+/// C0 control characters are invalid in XML 1.0 even as character
+/// references, so they are replaced rather than escaped — CI must never be
+/// handed an unparseable report because a panic message carried one.
+pub fn junit_replaces_control_characters_test() {
+  let p =
+    gleam_panic.GleamPanic(
+      message: "bad\u{0008}byte",
+      file: "f",
+      module: "m",
+      function: "f",
+      line: 1,
+      kind: gleam_panic.Panic,
+    )
+  let results = [
+    #("m_test", "x_test", outcome.Failed(outcome.PanicDetail(p)), 0),
+  ]
+  let xml = junit.render(results, 0)
+  assert string.contains(xml, "message=\"bad\u{fffd}byte\"")
 }
 
 // --- TeamCity service messages ---
@@ -684,6 +708,45 @@ pub fn teamcity_comparison_failure_test() {
   // helpers.assert_fails is `assert 1 + 1 == 3`.
   assert string.contains(joined, "actual='2'")
   assert string.contains(joined, "expected='3'")
+}
+
+/// The literal-goes-to-expected orientation the console applies (see
+/// describe_orients_literal_as_expected_test) must reach the TeamCity diff
+/// too, or the two reporters would contradict each other about which value
+/// the test expected.
+pub fn teamcity_comparison_orients_literal_test() {
+  let p =
+    panic_with(gleam_panic.Assert(
+      start: 0,
+      end: 3,
+      expression_start: 0,
+      kind: gleam_panic.BinaryOperator(
+        operator: "==",
+        left: gleam_panic.AssertedExpression(
+          start: 0,
+          end: 1,
+          kind: gleam_panic.Literal(dynamic.int(5)),
+        ),
+        right: gleam_panic.AssertedExpression(
+          start: 2,
+          end: 3,
+          kind: gleam_panic.Expression(dynamic.int(4)),
+        ),
+      ),
+    ))
+  let #(_, lines) =
+    teamcity.step(
+      None,
+      event.TestResult(
+        "m_test",
+        "x_test",
+        outcome.Failed(outcome.PanicDetail(p)),
+        0,
+      ),
+    )
+  let joined = string.join(lines, "\n")
+  assert string.contains(joined, "expected='5'")
+  assert string.contains(joined, "actual='4'")
 }
 
 pub fn teamcity_escaping_test() {

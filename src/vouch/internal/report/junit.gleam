@@ -175,13 +175,30 @@ fn seconds(us: Int) -> String {
   <> string.pad_start(int.to_string(ms % 1000), 3, "0")
 }
 
+/// The five XML entities, plus the C0 control characters, which XML 1.0
+/// forbids outright — even as character references. A panic message can
+/// carry them (string.inspect of binary data, an ANSI escape in a caught
+/// error), and one such byte passed through would make CI reject the whole
+/// report file. They become U+FFFD instead; tab, newline and carriage
+/// return are the three controls XML allows.
 fn escape(s: String) -> String {
   s
-  |> string.replace("&", "&amp;")
-  |> string.replace("<", "&lt;")
-  |> string.replace(">", "&gt;")
-  |> string.replace("\"", "&quot;")
-  |> string.replace("'", "&apos;")
+  |> string.to_utf_codepoints
+  |> list.map(escape_codepoint)
+  |> string.concat
+}
+
+fn escape_codepoint(cp: UtfCodepoint) -> String {
+  case string.utf_codepoint_to_int(cp) {
+    0x26 -> "&amp;"
+    0x3c -> "&lt;"
+    0x3e -> "&gt;"
+    0x22 -> "&quot;"
+    0x27 -> "&apos;"
+    0x09 | 0x0a | 0x0d -> string.from_utf_codepoints([cp])
+    code if code < 0x20 -> "\u{fffd}"
+    _ -> string.from_utf_codepoints([cp])
+  }
 }
 
 @external(erlang, "vouch_ffi", "write_file")

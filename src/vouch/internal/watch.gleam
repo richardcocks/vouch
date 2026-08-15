@@ -31,7 +31,7 @@ pub fn run(args: List(String)) -> Nil {
   let color = term.should_use_color(config.Auto)
   case inner_args(args, color) {
     Error(message) -> {
-      io.println(message)
+      io.println_error(message)
       runner.halt(2)
     }
     Ok(inner) -> loop(inner, color, 1)

@@ -2,7 +2,6 @@
 //// per-target loops live here with the narrow FFI contract at the bottom.
 
 import gleam/dynamic.{type Dynamic}
-import gleam/io
 import gleam/list
 import gleam/option.{type Option}
 import gleam/order
@@ -11,6 +10,7 @@ import vouch/internal/config
 import vouch/internal/event.{type Tally, Tally}
 import vouch/internal/outcome.{type TestOutcome}
 import vouch/internal/reporter.{type Reporter}
+import vouch/internal/term
 
 pub fn tally(outcomes: List(TestOutcome)) -> Tally {
   Tally(
@@ -269,9 +269,31 @@ fn schedulers_online() -> Int
 // callbacks. The state tuple is (reporter state, outcomes so far, start time
 // of the test in flight).
 
-// JavaScript has no cheap process primitive: tests run in-process and the
-// timeout does not apply. A documented target difference — but asking for a
-// non-default timeout here deserves a loud note rather than silence.
+/// JavaScript has no cheap process primitive: tests run in-process, so
+/// `--timeout` and `--parallel` do not apply there. A documented target
+/// difference — but a flag that will be ignored deserves a loud note
+/// rather than silence. Not `@target(javascript)`: compiled for both
+/// targets so neither compile sees a half-unused import.
+pub fn warn_ineffective_js_flags(
+  timeout_ms: Int,
+  parallel: config.Parallelism,
+) -> Nil {
+  case timeout_ms == config.default_timeout_ms {
+    True -> Nil
+    False ->
+      term.warn(
+        "--timeout has no effect on the JavaScript target — tests run in-process and cannot be interrupted",
+      )
+  }
+  case parallel {
+    config.Sequential -> Nil
+    _ ->
+      term.warn(
+        "--parallel has no effect on the JavaScript target — tests run in-process on a single thread",
+      )
+  }
+}
+
 @target(javascript)
 pub fn run(
   rep: Reporter(s),
@@ -279,20 +301,7 @@ pub fn run(
   timeout_ms: Int,
   parallel: config.Parallelism,
 ) -> Nil {
-  case timeout_ms == config.default_timeout_ms {
-    True -> Nil
-    False ->
-      io.println_error(
-        "vouch: --timeout has no effect on the JavaScript target — tests run in-process and cannot be interrupted",
-      )
-  }
-  case parallel {
-    config.Sequential -> Nil
-    _ ->
-      io.println_error(
-        "vouch: --parallel has no effect on the JavaScript target — tests run in-process on a single thread",
-      )
-  }
+  warn_ineffective_js_flags(timeout_ms, parallel)
   let started = now_microseconds()
   js_run_tests(
     #(rep.init, [], 0),

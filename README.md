@@ -160,6 +160,22 @@ sequentially in-process: async test functions are awaited, but a test
 that never resolves cannot be interrupted, and `--timeout` and
 `--parallel` have no effect (vouch says so rather than pretending).
 
+Running under Deno needs permissions in your project's `gleam.toml`:
+read access for discovery and source quoting, write access if you use
+`--junit`, and `NO_COLOR` for colour detection.
+
+```toml
+[javascript.deno]
+allow_read = ["gleam.toml", "src", "test", "build"]
+allow_write = ["."]
+allow_env = ["NO_COLOR"]
+```
+
+Without `allow_read` on `src`, failure reports for panics inside
+application code lose their source quoting (the expected/actual lines
+remain); without `allow_write`, `--junit` reports a write failure on
+stderr.
+
 ## Not supported
 
 Hand-written `.erl` EUnit test modules (generators, fixtures) that happen

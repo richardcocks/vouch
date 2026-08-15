@@ -153,12 +153,17 @@ fn binary_detail(
   }
 }
 
-/// Which operand is the expectation, for the symmetric operators. Tests are
-/// written `assert actual == expected` far more often than the reverse, so
-/// the left operand is the actual value — unless the left is a literal and
-/// the right is not, which can only be the reverse shape: a literal is what
-/// a test expects, never what it computed.
-fn orient(l: AssertedExpression, r: AssertedExpression) -> #(String, String) {
+/// Which operand is the expectation, for the symmetric operators, as
+/// `#(actual, expected)`. Tests are written `assert actual == expected` far
+/// more often than the reverse, so the left operand is the actual value —
+/// unless the left is a literal and the right is not, which can only be the
+/// reverse shape: a literal is what a test expects, never what it computed.
+/// Public so reporters with their own expected/actual fields (TeamCity's
+/// comparisonFailure) orient identically to the console.
+pub fn orient(
+  l: AssertedExpression,
+  r: AssertedExpression,
+) -> #(String, String) {
   let left = gleam_panic.describe_expression(l)
   let right = gleam_panic.describe_expression(r)
   case l.kind, r.kind {

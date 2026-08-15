@@ -73,9 +73,11 @@ fn parse(args: List(String), config: Config) -> Result(Config, String) {
       parse(rest, Config(..config, junit: Some(path)))
     ["--timeout=" <> value, ..rest] ->
       case int.parse(value) {
-        Ok(ms) -> parse(rest, Config(..config, timeout_ms: ms))
-        Error(Nil) ->
-          Error(usage("--timeout expects milliseconds, got: " <> value))
+        Ok(ms) if ms >= 1 -> parse(rest, Config(..config, timeout_ms: ms))
+        _ ->
+          Error(usage(
+            "--timeout expects milliseconds of at least 1, got: " <> value,
+          ))
       }
     ["--parallel", ..rest] ->
       parse(rest, Config(..config, parallel: AutoParallel))

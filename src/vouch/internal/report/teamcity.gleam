@@ -130,15 +130,19 @@ fn panic_failure(function: String, p: GleamPanic) -> String {
     gleam_panic.Assert(
       kind: gleam_panic.BinaryOperator(operator: "==", left: l, right: r),
       ..,
-    ) ->
+    ) -> {
+      // Oriented by describe.orient, so the diff agrees with the console
+      // about which operand was the expectation.
+      let #(actual, expected) = describe.orient(l, r)
       message("testFailed", [
         #("name", function),
         #("type", "comparisonFailure"),
         #("message", p.message),
-        #("expected", gleam_panic.describe_expression(r)),
-        #("actual", gleam_panic.describe_expression(l)),
+        #("expected", expected),
+        #("actual", actual),
         #("details", where),
       ])
+    }
     // The same expected/actual wording the console reporter prints, as the
     // details block TeamCity shows under a failed test.
     _ ->

@@ -1,7 +1,14 @@
 //// Terminal facts and the colour decision. The FFI supplies two primitives
 //// (is stdout a TTY, read an environment variable); policy lives here.
 
+import gleam/io
 import vouch/internal/config
+
+/// A one-line advisory on stderr, where it cannot contaminate a stdout
+/// stream (JSONL, TeamCity).
+pub fn warn(message: String) -> Nil {
+  io.println_error("vouch: " <> message)
+}
 
 pub fn should_use_color(choice: config.ColorChoice) -> Bool {
   case choice {

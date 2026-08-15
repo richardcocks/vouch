@@ -1,4 +1,11 @@
-//// vouch — a test runner for Gleam.
+//// vouch — a gleeunit-compatible test runner for Gleam.
+////
+//// Tests are discovered by the ecosystem convention — modules under
+//// `test/` ending in `_test`, public zero-arity functions ending in
+//// `_test` — and run with expected/actual failure reports decoded from
+//// `assert` payloads, todo as its own outcome, JSONL/TeamCity/JUnit
+//// output, and process isolation on the Erlang target. The README has the
+//// full tour and every command-line option.
 
 import argv
 import gleam/io
@@ -13,6 +20,21 @@ import vouch/internal/runner
 import vouch/internal/term
 import vouch/internal/watch
 
+/// Run the test suite, honouring the options given after `--` on the
+/// `gleam test` command line. The entire migration from gleeunit is
+/// swapping it in:
+///
+/// ```gleam
+/// import vouch
+///
+/// pub fn main() {
+///   vouch.main()
+/// }
+/// ```
+///
+/// Exits 0 when every test passed or was skipped, 1 when any test failed
+/// or was blocked on a todo (and when no tests were found), 2 on a usage
+/// error.
 pub fn main() -> Nil {
   case argv.load().arguments {
     ["watch", ..rest] -> watch.run(rest)
@@ -23,7 +45,7 @@ pub fn main() -> Nil {
 fn run_tests(args: List(String)) -> Nil {
   case config.from_args(args) {
     Error(message) -> {
-      io.println(message)
+      io.println_error(message)
       runner.halt(2)
     }
     Ok(cfg) -> {

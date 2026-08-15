@@ -1,8 +1,8 @@
-// Walking-skeleton FFI. The async sequencing (dynamic import, awaiting test
-// functions) lives here because JavaScript makes those operations async;
-// decisions (what counts as a test, reporting, exit codes) belong to Gleam.
-// TODO: the *_test suffix checks are duplicated here so non-test modules are
-// never imported; unify once the discovery/execution contract settles.
+// The async sequencing (dynamic import, awaiting test functions) lives here
+// because JavaScript makes those operations async; decisions (what counts as
+// a test, reporting, exit codes) belong to Gleam. The *_test suffix checks
+// are deliberately duplicated here: filtering before the dynamic import is
+// what keeps non-test modules from ever being loaded.
 import { readFileSync, writeFileSync } from "node:fs";
 import { Result$Ok, Result$Error, List$Empty, List$NonEmpty } from "./gleam.mjs";
 import {
@@ -198,16 +198,12 @@ export function halt(code) {
   if (globalThis.Deno) {
     Deno.exit(code);
   } else {
-    process.exit(code);
+    // process.exit() discards stdout writes still buffered when stdout is a
+    // pipe, which would truncate a large JSONL stream mid-line. A write's
+    // callback runs only once everything queued before it has been flushed,
+    // so exiting from an empty write's callback preserves the whole stream.
+    process.stdout.write("", () => process.exit(code));
   }
-}
-
-function toList(array) {
-  let list = List$Empty();
-  for (let i = array.length - 1; i >= 0; i--) {
-    list = List$NonEmpty(array[i], list);
-  }
-  return list;
 }
 
 async function collectGleamFiles(directory) {
