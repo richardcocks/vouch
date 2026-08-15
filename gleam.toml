@@ -1,6 +1,6 @@
 name = "vouch"
-version = "0.1.0"
-description = "A gleeunit-compatible test runner with rich failures, todo outcomes, JSONL and JUnit output, and process isolation"
+version = "1.0.0"
+description = "A gleeunit-compatible test runner with todo outcomes, JSONL, teamcity and JUnit output, and process isolation"
 licences = ["Apache-2.0"]
 # Verified floor (podman, v1.14.0 images, both targets): the assert keyword
 # needs >= 1.11, but gleam_stdlib 1.x already requires >= 1.14, and vouch's
