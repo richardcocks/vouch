@@ -25,10 +25,19 @@ jobs:
         with:
           otp-version: ${{ matrix.otp }}
           gleam-version: ${{ matrix.gleam }}
+          hexpm-mirrors: |
+            https://builds.hex.pm
+            https://cdn.jsdelivr.net/hex
       # Node runs the JavaScript target, including the playground e2e runs.
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      # Hex package cache, shared by the root project and the playground.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/gleam
+          key: ${{ runner.os }}-gleam-deps-${{ hashFiles('**/manifest.toml') }}
+          restore-keys: ${{ runner.os }}-gleam-deps-
       - run: gleam deps download
       - run: gleam test
       - run: gleam test --target javascript
@@ -41,4 +50,7 @@ jobs:
         with:
           otp-version: "28"
           gleam-version: "1.18.1"
+          hexpm-mirrors: |
+            https://builds.hex.pm
+            https://cdn.jsdelivr.net/hex
       - run: gleam format --check src test

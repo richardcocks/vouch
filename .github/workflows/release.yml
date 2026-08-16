@@ -16,9 +16,17 @@ jobs:
         with:
           otp-version: "28"
           gleam-version: "1.18.1"
+          hexpm-mirrors: |
+            https://builds.hex.pm
+            https://cdn.jsdelivr.net/hex
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/gleam
+          key: ${{ runner.os }}-gleam-deps-${{ hashFiles('**/manifest.toml') }}
+          restore-keys: ${{ runner.os }}-gleam-deps-
       - name: Check tag matches gleam.toml version
         run: |
           version=$(grep -m1 '^version' gleam.toml | cut -d'"' -f2)
