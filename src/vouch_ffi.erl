@@ -12,6 +12,7 @@
     write_file/2,
     read_source/3,
     halt/1,
+    halt_now/1,
     file_snapshot/1,
     run_passthrough/2,
     sleep_ms/1,
@@ -258,6 +259,11 @@ wrap(#{
 halt(Code) ->
     erlang:halt(Code),
     nil.
+
+%% On the BEAM halt is already immediate; the distinction only matters on
+%% JavaScript, where halt/1 defers to a callback the blocked watch loop
+%% can never run.
+halt_now(Code) -> halt(Code).
 
 %% Watch-mode primitives. One row per file under the given roots (a root may
 %% be a file or a directory, searched recursively): path, mtime in gregorian

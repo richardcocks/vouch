@@ -84,7 +84,9 @@ fn wait_for_change(before: List(#(String, Int, Int))) -> Nil {
     // mirroring the Jest/Vitest watch keys.
     ForceRerun -> Nil
     RunAll -> Nil
-    Quit -> runner.halt(0)
+    // Not runner.halt: on JavaScript that defers the exit to a callback
+    // this loop never lets run, so it would fall through as a rerun.
+    Quit -> halt_now(0)
     NoCommand ->
       case snapshot(watched) == before {
         True -> wait_for_change(before)
@@ -246,6 +248,10 @@ fn take_pending_key() -> Int
 @external(erlang, "vouch_ffi", "keys_active")
 @external(javascript, "../../vouch_ffi.mjs", "keys_active")
 fn keys_active() -> Bool
+
+@external(erlang, "vouch_ffi", "halt_now")
+@external(javascript, "../../vouch_ffi.mjs", "halt_now")
+fn halt_now(code: Int) -> Nil
 
 @external(erlang, "vouch_ffi", "ensure_unicode_stdio")
 @external(javascript, "../../vouch_ffi.mjs", "ensure_unicode_stdio")

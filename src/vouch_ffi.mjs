@@ -273,6 +273,22 @@ export function keys_active() {
   return watchShared !== null;
 }
 
+// Immediate exit for the watch loop. halt() defers its exit to a stdout
+// write callback so a piped JSONL stream flushes fully — but that
+// callback can only run once the stack unwinds to the event loop, and
+// the synchronous watch loop never unwinds: a deferred halt there just
+// returns and the loop keeps going. Watch quit happens on a real console
+// (the keys only install on a TTY), where writes land synchronously, so
+// there is nothing buffered to lose by exiting on the spot.
+export function halt_now(code) {
+  setRawMode(false);
+  if (globalThis.Deno) {
+    Deno.exit(code);
+  } else {
+    process.exit(code);
+  }
+}
+
 // Node and Deno write UTF-8 to stdout/stderr regardless of redirection;
 // the latin1 hazard this guards against is BEAM-specific.
 export function ensure_unicode_stdio() {}
