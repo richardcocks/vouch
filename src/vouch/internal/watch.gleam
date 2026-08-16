@@ -26,34 +26,23 @@ const watched = ["gleam.toml", "src", "test"]
 const poll_interval_ms = 250
 
 pub fn run(args: List(String)) -> Nil {
-  case runner.target() {
-    runner.Erlang -> {
-      ensure_unicode_stdio()
-      // The quit listener reads stdin, and on Windows that read crashes the
-      // BEAM's io server outright when the console is redirected — taking
-      // every later print down with it. Interactive terminals only.
-      let interactive = term.is_stdout_tty()
-      case interactive {
-        True -> install_quit_hooks()
-        False -> Nil
-      }
-      let color = term.should_use_color(config.Auto)
-      case inner_args(args, color) {
-        Error(message) -> {
-          io.println_error(message)
-          runner.halt(2)
-        }
-        Ok(inner) -> loop(inner, color, interactive, 1)
-      }
-    }
-    runner.JavaScript -> {
-      io.println_error(
-        "vouch: watch mode runs on the Erlang target. It can still watch\n"
-        <> "JavaScript-target tests — the target applies to the inner runs:\n\n"
-        <> "  gleam run --target erlang -m vouch -- watch --target=javascript",
-      )
+  ensure_unicode_stdio()
+  // The quit listener reads stdin, and on Windows that read crashes the
+  // BEAM's io server outright when the console is redirected — taking
+  // every later print down with it. Interactive terminals only. (On the
+  // JavaScript target install_quit_hooks is a no-op either way.)
+  let interactive = term.is_stdout_tty()
+  case interactive {
+    True -> install_quit_hooks()
+    False -> Nil
+  }
+  let color = term.should_use_color(config.Auto)
+  case inner_args(args, color) {
+    Error(message) -> {
+      io.println_error(message)
       runner.halt(2)
     }
+    Ok(inner) -> loop(inner, color, interactive, 1)
   }
 }
 
@@ -98,10 +87,15 @@ fn print_status(code: Int, color: Bool, interactive: Bool) -> Nil {
     0 -> paint(color, green, "passing")
     _ -> paint(color, red, "failing (exit " <> int.to_string(code) <> ")")
   }
-  // The quit hint only holds when the listener was installed.
-  let quit_hint = case interactive {
-    True -> " · q then Enter to quit"
-    False -> ""
+  // The quit hint only holds for an interactive terminal, and the
+  // mechanism differs per target: the BEAM owns SIGINT (Ctrl+C opens its
+  // BREAK menu), so quitting there is a stdin listener; on JavaScript the
+  // blocked event loop rules a listener out, and the runtime's default
+  // SIGINT disposition quits.
+  let quit_hint = case interactive, runner.target() {
+    False, _ -> ""
+    True, runner.Erlang -> " · q then Enter to quit"
+    True, runner.JavaScript -> " · Ctrl+C to quit"
   }
   io.println("")
   io.println(
@@ -181,7 +175,9 @@ fn paint(color: Bool, code: String, text: String) -> String {
   }
 }
 
-/// One row per watched file: path, mtime in gregorian seconds, size.
+/// One row per watched file: path, mtime as a target-local integer
+/// (gregorian seconds on Erlang, milliseconds on JavaScript — snapshots
+/// are only ever compared for equality), size.
 /// Public so the test suite can exercise change detection directly.
 @external(erlang, "vouch_ffi", "file_snapshot")
 @external(javascript, "../../vouch_ffi.mjs", "file_snapshot")

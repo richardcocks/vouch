@@ -3,7 +3,8 @@
 // a test, reporting, exit codes) belong to Gleam. The *_test suffix checks
 // are deliberately duplicated here: filtering before the dynamic import is
 // what keeps non-test modules from ever being loaded.
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, statSync, readdirSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { Result$Ok, Result$Error, List$Empty, List$NonEmpty } from "./gleam.mjs";
 import {
   GleamPanic$GleamPanic,
@@ -64,9 +65,9 @@ export function is_erlang() {
   return false;
 }
 
-// Stubs for the Erlang-only primitives (process isolation, parallelism,
-// watch mode). Unreachable: runner.run and watch.run dispatch on
-// is_erlang() before any of these can be called.
+// Stubs for the Erlang-only primitives (process isolation, parallelism).
+// Unreachable: runner.run dispatches on is_erlang() before any of these
+// can be called.
 function erlangOnly(name) {
   throw new Error(`vouch: ${name} is only available on the Erlang target`);
 }
@@ -99,25 +100,81 @@ export function schedulers_online() {
   erlangOnly("schedulers_online");
 }
 
-export function file_snapshot(_roots) {
-  erlangOnly("file_snapshot");
+// Watch mode primitives. The Gleam supervisor loop is synchronous, so these
+// deliberately block — spawnSync for the inner run, Atomics.wait for the
+// poll interval. Anything async could never fire anyway: the loop never
+// returns to the event loop.
+
+// One row per watched file: [path, mtime, size], sorted by path. The mtime
+// is target-local (milliseconds here, gregorian seconds on Erlang):
+// snapshots are only ever compared for equality, and the size column still
+// guards same-tick rewrites.
+export function file_snapshot(roots) {
+  const rows = [];
+  for (const root of roots) {
+    collectSnapshotRows(root, rows);
+  }
+  rows.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  let list = List$Empty();
+  let i = rows.length;
+  while (i--) {
+    list = List$NonEmpty(rows[i], list);
+  }
+  return list;
 }
 
-export function run_passthrough(_command, _args) {
-  erlangOnly("run_passthrough");
+function collectSnapshotRows(path, rows) {
+  try {
+    const stats = statSync(path, { throwIfNoEntry: false });
+    if (stats === undefined) return;
+    if (stats.isDirectory()) {
+      for (const entry of readdirSync(path)) {
+        collectSnapshotRows(`${path}/${entry}`, rows);
+      }
+    } else {
+      rows.push([path, Math.floor(stats.mtimeMs), stats.size]);
+    }
+  } catch {
+    // Deleted mid-walk: contribute nothing, the next poll sees the truth.
+  }
 }
 
-export function sleep_ms(_ms) {
-  erlangOnly("sleep_ms");
+// Output is inherited so the inner run streams straight to the terminal;
+// stdin is ignored so inner runs never contend for it. Error(Nil) only for
+// "not found" — anything else (notably Deno's NotCapable when allow_run is
+// missing) is rethrown so the runtime's own diagnostic surfaces. No shell:
+// on Windows this resolves gleam.exe via PATH but would miss a .cmd shim,
+// which gleam does not ship as.
+export function run_passthrough(command, args) {
+  const result = spawnSync(command, [...args], {
+    stdio: ["ignore", "inherit", "inherit"],
+  });
+  if (result.error) {
+    if (result.error.code === "ENOENT") return Result$Error(undefined);
+    throw result.error;
+  }
+  // status is null when the child dies to a signal; the watcher is about
+  // to die to the same Ctrl+C, so the fallback is a formality.
+  return Result$Ok(result.status ?? 1);
 }
 
-export function install_quit_hooks() {
-  erlangOnly("install_quit_hooks");
+// Atomics.wait needs a SharedArrayBuffer view, allocated lazily so
+// ordinary test runs never touch SharedArrayBuffer.
+let sleeper;
+
+export function sleep_ms(ms) {
+  sleeper ??= new Int32Array(new SharedArrayBuffer(4));
+  Atomics.wait(sleeper, 0, 0, ms);
 }
 
-export function ensure_unicode_stdio() {
-  erlangOnly("ensure_unicode_stdio");
-}
+// Nothing to install: the synchronous loop never returns to the event
+// loop, so a stdin listener could not fire. Quitting is Ctrl+C — unlike
+// the BEAM, the runtime dies to SIGINT by default, even while blocked.
+export function install_quit_hooks() {}
+
+// Node and Deno write UTF-8 to stdout/stderr regardless of redirection;
+// the latin1 hazard this guards against is BEAM-specific.
+export function ensure_unicode_stdio() {}
 
 export function now_microseconds() {
   return Math.round(performance.now() * 1000);

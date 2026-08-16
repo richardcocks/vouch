@@ -57,11 +57,19 @@ gleam run -m vouch -- watch             # rerun the suite on file change
 ### Watch mode
 
 `gleam run -m vouch -- watch [options]` reruns the suite whenever there are changes in `src/`,
-`test/`, or `gleam.toml`.
+`test/`, or `gleam.toml`. It works on both targets, and `--target=erlang|javascript` selects the
+target of the inner test runs — so `gleam run --target javascript -m vouch -- watch --target=javascript`
+watches JavaScript tests without the BEAM installed.
 
-Press `q` then Enter to quit. It's a bit awkward, but Ctrl+C is captured by the BEAM and 
-I couldn't get it to work properly and I don't have enough environments to test the specifics for trying to 
-overcome that issue.
+Quitting depends on the host target:
+
+- **Erlang**: press `q` then Enter. It's a bit awkward, but Ctrl+C is captured by the BEAM and
+  I couldn't get it to work properly and I don't have enough environments to test the specifics
+  for trying to overcome that issue.
+- **JavaScript**: press Ctrl+C.
+
+On Deno, watch mode also needs `allow_run = ["gleam"]` to spawn the inner runs (see
+"Target differences" below).
 
 ## Outcomes
 
@@ -80,10 +88,12 @@ Deno needs permissions in your project's `gleam.toml`.
 You need `allow_read` for discovery and source quoting.
 you need `allow_write` if you use `--junit` for XML report output
 You need `allow_env` for detecting `NO_COLOR` environemnt variable
+You need `allow_run` if you use watch mode, which spawns `gleam test` for each cycle
 
 ```toml
 [javascript.deno]
 allow_read = ["gleam.toml", "src", "test", "build"]
 allow_write = ["."]
 allow_env = ["NO_COLOR"]
+allow_run = ["gleam"]
 ```

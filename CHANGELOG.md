@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+Watch mode now runs on the JavaScript target (Node and Deno), so
+`gleam run --target javascript -m vouch -- watch` works without the BEAM
+installed. Quitting is Ctrl+C on JavaScript (q then Enter on Erlang stays
+as it was). Deno projects using watch mode need `allow_run = ["gleam"]` in
+their `gleam.toml`.
+
 ## v1.1.0
 
 Add --test-name-filter for startest compatibility to allow running in zed.

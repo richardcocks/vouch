@@ -82,12 +82,12 @@ Decisions recorded from the build:
 == Watch mode (shipped post-v1)
 
 Shipped as `gleam run -m vouch -- watch [options]` — the lustre_dev_tools
-pattern: the watcher is honestly a separate program, hosted on the BEAM.
-Dispatch is on the first positional argument, so `gleam test -- watch`
-reaches the same loop; a `--target=javascript` argument is hoisted to the
-build tool's side of the inner invocation, so JavaScript suites are
-watched from the Erlang-hosted supervisor (on the JavaScript target,
-`watch` says it is unsupported and points at that spelling).
+pattern: the watcher is honestly a separate program, hosted initially on
+the BEAM and since ported to the JavaScript target too. Dispatch is on
+the first positional argument, so `gleam test -- watch` reaches the same
+loop; a `--target=javascript` argument is hoisted to the build tool's
+side of the inner invocation, so either host can watch either target's
+suites.
 
 `gleam test --watch` literally cannot exist without upstream toolchain
 changes — flags before `--` belong to the build tool. More fundamentally,
@@ -106,10 +106,12 @@ Decisions recorded from the build:
 - Polling, not native file watching (OTP has no built-in watcher;
   `fs.watch` quirks on JavaScript are why chokidar exists). Every 250ms
   the watched roots — `gleam.toml`, `src/`, `test/` — are snapshotted as
-  sorted (path, mtime, size) rows; size participates so a same-second
-  rewrite still registers despite mtime's one-second granularity. The
-  snapshot is taken *before* each run, so edits made while tests execute
-  trigger the next cycle.
+  sorted (path, mtime, size) rows; size participates so a rewrite within
+  the mtime's granularity (one second on Erlang, one millisecond on
+  JavaScript) still registers. The mtime is a target-local integer —
+  snapshots are only ever compared for equality, so the units never need
+  to agree across targets. The snapshot is taken *before* each run, so
+  edits made while tests execute trigger the next cycle.
 - One deviation from the planning sketch, which had the watcher parsing
   the inner run's JSONL: the watcher instead streams the inner run's own
   console output through untouched, pinning `--color=always` when the
@@ -121,8 +123,9 @@ Decisions recorded from the build:
 - Passthrough flags are validated once at startup with the same parser
   the inner run uses, so a typo fails loudly before the loop starts
   instead of on every cycle.
-- Quitting is a stdin listener on `q` + Enter, because that is the only
-  clean quit the BEAM allows a long-running foreground program. Ctrl+C
+- Quitting on the Erlang host is a stdin listener on `q` + Enter, because
+  that is the only clean quit the BEAM allows a long-running foreground
+  program. Ctrl+C
   belongs to the emulator: SIGINT cannot be taken over at runtime
   (`os:set_signal(sigint, handle)` is badarg — verified, as was the
   tempting-but-wrong fix that catches the badarg and claims Ctrl+C
@@ -136,6 +139,17 @@ Decisions recorded from the build:
   instant re-runs are not achievable from outside the toolchain. A
   compile error is just a red cycle: the inner run exits non-zero with
   the compiler's diagnostics on stderr, and the watcher keeps waiting.
+
+The JavaScript port (August 2026) is sync mimicry: the Gleam loop is
+shared unchanged, and the four primitives block deliberately —
+`spawnSync` with inherited output for the inner run, `Atomics.wait` on a
+`SharedArrayBuffer` for the poll sleep, `readdirSync`/`statSync` for the
+snapshot — all through `node:` compat APIs so Node and Deno share one
+code path (Deno additionally needs `allow_run = ["gleam"]`). Quitting
+there is Ctrl+C: the blocked event loop means a stdin listener could
+never fire, and unlike the BEAM the runtime's default SIGINT disposition
+terminates it even mid-block, so the mechanism the Erlang host fights is
+exactly the one the JavaScript host gets for free.
 
 == TeamCity service messages (shipped post-v1)
 
