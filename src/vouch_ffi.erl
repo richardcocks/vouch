@@ -262,8 +262,11 @@ halt(Code) ->
 
 %% On the BEAM halt is already immediate; the distinction only matters on
 %% JavaScript, where halt/1 defers to a callback the blocked watch loop
-%% can never run.
-halt_now(Code) -> halt(Code).
+%% can never run. erlang:halt directly, not the local halt/1 — calling
+%% that is an ambiguous-BIF error on older toolchains.
+halt_now(Code) ->
+    erlang:halt(Code),
+    nil.
 
 %% Watch-mode primitives. One row per file under the given roots (a root may
 %% be a file or a directory, searched recursively): path, mtime in gregorian
