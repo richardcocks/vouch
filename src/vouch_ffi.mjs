@@ -142,18 +142,23 @@ function collectSnapshotRows(path, rows) {
 }
 
 // Output is inherited so the inner run streams straight to the terminal;
-// stdin is ignored so inner runs never contend for it. Error(Nil) only for
-// "not found" — anything else (notably Deno's NotCapable when allow_run is
-// missing) is rethrown so the runtime's own diagnostic surfaces. No shell:
-// on Windows this resolves gleam.exe via PATH but would miss a .cmd shim,
-// which gleam does not ship as.
+// stdin is a pipe the watcher never writes, so inner runs get a valid
+// handle that immediately reads EOF without contending for the console —
+// the same deal the Erlang port gives them. Not "ignore": on Windows
+// that hands the child an invalid stdin handle, and a BEAM inner run's
+// prim_tty SetConsoleMode's it at startup when stdout is a console,
+// crashing user_drv with SetConsoleModeInitIn "The handle is invalid".
+// Error(Nil) only for "not found" — anything else (notably Deno's
+// NotCapable when allow_run is missing) is rethrown so the runtime's own
+// diagnostic surfaces. No shell: on Windows this resolves gleam.exe via
+// PATH but would miss a .cmd shim, which gleam does not ship as.
 export function run_passthrough(command, args) {
   // Hand the console back for the duration of the run: raw mode off
   // restores native Ctrl+C, which kills watcher and child together.
   setRawMode(false);
   try {
     const result = spawnSync(command, [...args], {
-      stdio: ["ignore", "inherit", "inherit"],
+      stdio: ["pipe", "inherit", "inherit"],
     });
     if (result.error) {
       if (result.error.code === "ENOENT") return Result$Error(undefined);
