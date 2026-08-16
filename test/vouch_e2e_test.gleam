@@ -8,6 +8,7 @@
 //// (each spawns a full `gleam test`, including the playground's compile
 //// check).
 
+import gleam/list
 import gleam/string
 
 @target(erlang)
@@ -22,10 +23,16 @@ pub fn playground_erlang_e2e_test() {
   assert string.contains(out, "\"outcome\":\"todo\"")
   assert string.contains(out, "\"site_function\":\"rate_limit\"")
   // Every stdout line must be a JSON object: the stream stays machine-clean.
-  assert out
+  // Asserting that no offending line was found (rather than a Bool over the
+  // whole list) makes a failure print the first non-JSON line itself.
+  let offending =
+    out
     |> string.trim
     |> string.split("\n")
-    |> all_json_objects
+    |> list.find(fn(line) {
+      !{ string.starts_with(line, "{") && string.ends_with(line, "}") }
+    })
+  assert offending == Error(Nil)
 }
 
 @target(erlang)
@@ -76,18 +83,6 @@ pub fn playground_parallel_e2e_test() {
     "\"event\":\"run_end\",\"passed\":2,\"failed\":3,\"todo\":2,\"skipped\":1",
   )
   assert string.contains(out, "\"site_function\":\"rate_limit\"")
-}
-
-@target(erlang)
-fn all_json_objects(lines: List(String)) -> Bool {
-  case lines {
-    [] -> True
-    [line, ..rest] ->
-      case string.starts_with(line, "{") && string.ends_with(line, "}") {
-        True -> all_json_objects(rest)
-        False -> False
-      }
-  }
 }
 
 @target(erlang)
