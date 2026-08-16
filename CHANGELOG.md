@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.0.1
+## v1.1.0
 
 Add --test-name-filter for startest compatibility to allow running in zed,
 
