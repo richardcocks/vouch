@@ -12,10 +12,13 @@
     write_file/2,
     read_source/3,
     halt/1,
+    halt_now/1,
     file_snapshot/1,
     run_passthrough/2,
     sleep_ms/1,
     install_quit_hooks/0,
+    take_pending_key/0,
+    keys_active/0,
     ensure_unicode_stdio/0,
     start_test/3,
     await_test/1,
@@ -257,6 +260,14 @@ halt(Code) ->
     erlang:halt(Code),
     nil.
 
+%% On the BEAM halt is already immediate; the distinction only matters on
+%% JavaScript, where halt/1 defers to a callback the blocked watch loop
+%% can never run. erlang:halt directly, not the local halt/1 — calling
+%% that is an ambiguous-BIF error on older toolchains.
+halt_now(Code) ->
+    erlang:halt(Code),
+    nil.
+
 %% Watch-mode primitives. One row per file under the given roots (a root may
 %% be a file or a directory, searched recursively): path, mtime in gregorian
 %% seconds, size in bytes. Sorted so two snapshots of an unchanged tree
@@ -351,6 +362,14 @@ ensure_unicode_stdio() ->
 install_quit_hooks() ->
     spawn(fun quit_listener/0),
     nil.
+
+%% The watch loop polls this for the JavaScript interactive keys
+%% (Enter / a / q). The BEAM has no key worker — its quit listener
+%% handles stdin — so there is never a pending key here.
+take_pending_key() -> 0.
+
+%% Unreachable: print_status only asks on the JavaScript target.
+keys_active() -> erlang:error(javascript_only).
 
 quit_listener() ->
     case io:get_line("") of

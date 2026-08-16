@@ -135,5 +135,7 @@ fn usage(problem: String) -> String {
   <> "                  auto respects NO_COLOR and non-TTY output\n"
   <> "\n"
   <> "Watch mode (rerun on file change):\n"
-  <> "  gleam run -m vouch -- watch [options] [--target=erlang|javascript]"
+  <> "  gleam run -m vouch -- watch [options] [--target=erlang|javascript]\n"
+  <> "                  the inner runs follow the watcher's target unless\n"
+  <> "                  --target says otherwise"
 }
