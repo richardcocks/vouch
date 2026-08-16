@@ -44,7 +44,7 @@ the most human-friendly way I could manage.
 ```sh
 gleam test
 gleam test -- --filter=parser
-gleam test -- --test-name-filter=parser # alias for --filter; matches Zed's run-test task
+gleam test -- --test-name-filter=parser # alias for --filter for startest compatibility ( zed extension convention )
 gleam test -- --format=json
 gleam test -- --format=teamcity
 gleam test -- --junit=report.xml
