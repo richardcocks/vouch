@@ -1,5 +1,7 @@
 # vouch
 
+[![Package Version](https://img.shields.io/hexpm/v/vouch)](https://hex.pm/packages/vouch)
+[![Hex Docs](https://img.shields.io/badge/hex-docs-ffaff3)](https://hexdocs.pm/vouch/)
 [![CI](https://github.com/richardcocks/vouch/actions/workflows/ci.yml/badge.svg)](https://github.com/richardcocks/vouch/actions/workflows/ci.yml)
 
 <img width="814" height="630" alt="image" src="https://github.com/user-attachments/assets/8a0a81bc-0641-4f32-890a-4bee560fa2e4" />
