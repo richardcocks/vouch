@@ -18,8 +18,17 @@
     install_quit_hooks/0,
     start_test/3,
     await_test/1,
-    schedulers_online/0
+    schedulers_online/0,
+    is_erlang/0,
+    run_tests/6
 ]).
+
+is_erlang() -> true.
+
+%% Stub for the JavaScript-only async loop. Unreachable: runner.run
+%% dispatches on is_erlang/0 before either loop is entered.
+run_tests(_State, _ShouldRun, _OnBegin, _OnTestStart, _OnTestResult, _OnDone) ->
+    erlang:error(javascript_only).
 
 write_file(Path, Content) ->
     case file:write_file(unicode:characters_to_list(Path), Content) of

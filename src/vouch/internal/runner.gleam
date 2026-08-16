@@ -82,11 +82,47 @@ pub fn halt(code: Int) -> Nil
 @external(javascript, "../../vouch_ffi.mjs", "now_microseconds")
 fn now_microseconds() -> Int
 
+/// The target this build is running on. Per-target behaviour is chosen at
+/// runtime rather than with `@target` conditional compilation, so every
+/// function here compiles for both targets and the API is identical
+/// everywhere; the never-taken side of each split is an FFI stub. Dispatch
+/// sites match exhaustively, so a future target variant would surface
+/// every decision point as a compile error.
+pub type Target {
+  Erlang
+  JavaScript
+}
+
+pub fn target() -> Target {
+  case is_erlang() {
+    True -> Erlang
+    False -> JavaScript
+  }
+}
+
+// A Bool keeps the FFI contract trivial: constructing Target records from
+// the FFI would couple it to compiler-generated code. If a third target is
+// ever added it needs its own FFI file anyway; this gets replaced then.
+@external(erlang, "vouch_ffi", "is_erlang")
+@external(javascript, "../../vouch_ffi.mjs", "is_erlang")
+fn is_erlang() -> Bool
+
+pub fn run(
+  rep: Reporter(s),
+  filter: Option(String),
+  timeout_ms: Int,
+  parallel: config.Parallelism,
+) -> Nil {
+  case target() {
+    Erlang -> run_beam(rep, filter, timeout_ms, parallel)
+    JavaScript -> run_js(rep, filter, timeout_ms, parallel)
+  }
+}
+
 // On the Erlang target enumeration and invocation are synchronous, so the
 // whole loop is Gleam.
 
-@target(erlang)
-pub fn run(
+fn run_beam(
   rep: Reporter(s),
   filter: Option(String),
   timeout_ms: Int,
@@ -125,7 +161,6 @@ pub fn run(
   finish(rep, state, list.reverse(outcomes), now_microseconds() - started)
 }
 
-@target(erlang)
 fn workers(parallel: config.Parallelism) -> Int {
   case parallel {
     config.Sequential -> 1
@@ -134,7 +169,6 @@ fn workers(parallel: config.Parallelism) -> Int {
   }
 }
 
-@target(erlang)
 fn run_sequential(
   rep: Reporter(s),
   state: s,
@@ -155,7 +189,6 @@ fn run_sequential(
   })
 }
 
-@target(erlang)
 /// A sliding window over the test list: admit tests (oldest slot first)
 /// until `workers` are in flight, then await the oldest before admitting
 /// more. Results are reported in discovery order — identical to the
@@ -211,29 +244,28 @@ fn run_window(
   }
 }
 
-@target(erlang)
 @external(erlang, "vouch_ffi", "redirect_diagnostics_to_stderr")
+@external(javascript, "../../vouch_ffi.mjs", "redirect_diagnostics_to_stderr")
 fn redirect_diagnostics_to_stderr() -> Nil
 
-@target(erlang)
 fn path_to_module(path: String) -> String {
   path
   |> string.replace("\\", "/")
   |> string.replace(".gleam", "")
 }
 
-@target(erlang)
 @external(erlang, "vouch_ffi", "find_test_files")
+@external(javascript, "../../vouch_ffi.mjs", "find_test_files")
 fn find_test_files() -> List(String)
 
-@target(erlang)
 @external(erlang, "vouch_ffi", "exported_zero_arity")
+@external(javascript, "../../vouch_ffi.mjs", "exported_zero_arity")
 fn exported_zero_arity(module: String) -> List(String)
 
-@target(erlang)
 /// Run one exported zero-arity function in its own monitored process with a
 /// timeout. Public so vouch's own suite can exercise isolation directly.
 @external(erlang, "vouch_ffi", "run_test")
+@external(javascript, "../../vouch_ffi.mjs", "run_test")
 pub fn run_in_process(
   module: String,
   function: String,
@@ -244,24 +276,24 @@ pub fn run_in_process(
 /// the FFI.
 pub type TestHandle
 
-@target(erlang)
 /// Start one test without waiting for it. The spawned middleman runs the
 /// same run_test as the sequential path — identical isolation and timeout
 /// semantics — and `await_test` collects the invocation and its duration
 /// in microseconds. Public so the suite can prove concurrency directly.
 @external(erlang, "vouch_ffi", "start_test")
+@external(javascript, "../../vouch_ffi.mjs", "start_test")
 pub fn start_test(
   module: String,
   function: String,
   timeout_ms: Int,
 ) -> TestHandle
 
-@target(erlang)
 @external(erlang, "vouch_ffi", "await_test")
+@external(javascript, "../../vouch_ffi.mjs", "await_test")
 pub fn await_test(handle: TestHandle) -> #(outcome.Invocation, Int)
 
-@target(erlang)
 @external(erlang, "vouch_ffi", "schedulers_online")
+@external(javascript, "../../vouch_ffi.mjs", "schedulers_online")
 fn schedulers_online() -> Int
 
 // On the JavaScript target dynamic import and test invocation are async, so
@@ -272,8 +304,7 @@ fn schedulers_online() -> Int
 /// JavaScript has no cheap process primitive: tests run in-process, so
 /// `--timeout` and `--parallel` do not apply there. A documented target
 /// difference — but a flag that will be ignored deserves a loud note
-/// rather than silence. Not `@target(javascript)`: compiled for both
-/// targets so neither compile sees a half-unused import.
+/// rather than silence.
 pub fn warn_ineffective_js_flags(
   timeout_ms: Int,
   parallel: config.Parallelism,
@@ -294,8 +325,7 @@ pub fn warn_ineffective_js_flags(
   }
 }
 
-@target(javascript)
-pub fn run(
+fn run_js(
   rep: Reporter(s),
   filter: Option(String),
   timeout_ms: Int,
@@ -329,7 +359,7 @@ pub fn run(
   )
 }
 
-@target(javascript)
+@external(erlang, "vouch_ffi", "run_tests")
 @external(javascript, "../../vouch_ffi.mjs", "run_tests")
 fn js_run_tests(
   state: #(s, List(TestOutcome), Int),
