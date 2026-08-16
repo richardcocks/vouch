@@ -25,30 +25,30 @@ const watched = ["gleam.toml", "src", "test"]
 
 const poll_interval_ms = 250
 
-@target(erlang)
 pub fn run(args: List(String)) -> Nil {
-  install_quit_hooks()
-  let color = term.should_use_color(config.Auto)
-  case inner_args(args, color) {
-    Error(message) -> {
-      io.println_error(message)
+  case runner.is_erlang() {
+    True -> {
+      install_quit_hooks()
+      let color = term.should_use_color(config.Auto)
+      case inner_args(args, color) {
+        Error(message) -> {
+          io.println_error(message)
+          runner.halt(2)
+        }
+        Ok(inner) -> loop(inner, color, 1)
+      }
+    }
+    False -> {
+      io.println_error(
+        "vouch: watch mode runs on the Erlang target. It can still watch\n"
+        <> "JavaScript-target tests — the target applies to the inner runs:\n\n"
+        <> "  gleam run --target erlang -m vouch -- watch --target=javascript",
+      )
       runner.halt(2)
     }
-    Ok(inner) -> loop(inner, color, 1)
   }
 }
 
-@target(javascript)
-pub fn run(_args: List(String)) -> Nil {
-  io.println_error(
-    "vouch: watch mode runs on the Erlang target. It can still watch\n"
-    <> "JavaScript-target tests — the target applies to the inner runs:\n\n"
-    <> "  gleam run --target erlang -m vouch -- watch --target=javascript",
-  )
-  runner.halt(2)
-}
-
-@target(erlang)
 fn loop(inner: List(String), color: Bool, run_number: Int) -> Nil {
   // Snapshot before running, so edits made while tests execute still
   // trigger the next cycle.
@@ -72,7 +72,6 @@ fn loop(inner: List(String), color: Bool, run_number: Int) -> Nil {
   }
 }
 
-@target(erlang)
 fn wait_for_change(before: List(#(String, Int, Int))) -> Nil {
   sleep_ms(poll_interval_ms)
   case snapshot(watched) == before {
@@ -164,20 +163,20 @@ fn paint(color: Bool, code: String, text: String) -> String {
   }
 }
 
-@target(erlang)
 /// One row per watched file: path, mtime in gregorian seconds, size.
 /// Public so the test suite can exercise change detection directly.
 @external(erlang, "vouch_ffi", "file_snapshot")
+@external(javascript, "../../vouch_ffi.mjs", "file_snapshot")
 pub fn snapshot(roots: List(String)) -> List(#(String, Int, Int))
 
-@target(erlang)
 @external(erlang, "vouch_ffi", "run_passthrough")
+@external(javascript, "../../vouch_ffi.mjs", "run_passthrough")
 fn run_passthrough(command: String, args: List(String)) -> Result(Int, Nil)
 
-@target(erlang)
 @external(erlang, "vouch_ffi", "sleep_ms")
+@external(javascript, "../../vouch_ffi.mjs", "sleep_ms")
 fn sleep_ms(ms: Int) -> Nil
 
-@target(erlang)
 @external(erlang, "vouch_ffi", "install_quit_hooks")
+@external(javascript, "../../vouch_ffi.mjs", "install_quit_hooks")
 fn install_quit_hooks() -> Nil

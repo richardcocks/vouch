@@ -60,6 +60,61 @@ async function run(state, should_run, on_begin, on_test_start, on_test_result, o
   on_done(state);
 }
 
+export function is_erlang() {
+  return false;
+}
+
+// Stubs for the Erlang-only primitives (process isolation, parallelism,
+// watch mode). Unreachable: runner.run and watch.run dispatch on
+// is_erlang() before any of these can be called.
+function erlangOnly(name) {
+  throw new Error(`vouch: ${name} is only available on the Erlang target`);
+}
+
+export function redirect_diagnostics_to_stderr() {
+  erlangOnly("redirect_diagnostics_to_stderr");
+}
+
+export function find_test_files() {
+  erlangOnly("find_test_files");
+}
+
+export function exported_zero_arity(_module) {
+  erlangOnly("exported_zero_arity");
+}
+
+export function run_test(_module, _function, _timeout_ms) {
+  erlangOnly("run_test");
+}
+
+export function start_test(_module, _function, _timeout_ms) {
+  erlangOnly("start_test");
+}
+
+export function await_test(_handle) {
+  erlangOnly("await_test");
+}
+
+export function schedulers_online() {
+  erlangOnly("schedulers_online");
+}
+
+export function file_snapshot(_roots) {
+  erlangOnly("file_snapshot");
+}
+
+export function run_passthrough(_command, _args) {
+  erlangOnly("run_passthrough");
+}
+
+export function sleep_ms(_ms) {
+  erlangOnly("sleep_ms");
+}
+
+export function install_quit_hooks() {
+  erlangOnly("install_quit_hooks");
+}
+
 export function now_microseconds() {
   return Math.round(performance.now() * 1000);
 }
