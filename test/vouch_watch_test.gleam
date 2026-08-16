@@ -73,6 +73,29 @@ pub fn inner_args_explicit_target_beats_host_test() {
     == Ok(["test", "--target", "erlang", "--"])
 }
 
+pub fn inner_args_accepts_space_separated_target_test() {
+  // `--target x` and `--target=x` both work, matching gleam's own flag.
+  assert watch.inner_args(
+      ["--target", "javascript", "--filter=x"],
+      False,
+      runner.Erlang,
+    )
+    == Ok(["test", "--target", "javascript", "--", "--filter=x"])
+}
+
+pub fn inner_args_rejects_target_without_value_test() {
+  let assert Error(_) = watch.inner_args(["--target"], False, runner.Erlang)
+}
+
+pub fn inner_args_rejects_repeated_mixed_target_test() {
+  let assert Error(_) =
+    watch.inner_args(
+      ["--target=erlang", "--target", "javascript"],
+      False,
+      runner.Erlang,
+    )
+}
+
 pub fn inner_args_rejects_unknown_target_test() {
   let assert Error(_) =
     watch.inner_args(["--target=python"], False, runner.Erlang)

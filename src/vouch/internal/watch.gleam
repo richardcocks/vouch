@@ -177,6 +177,9 @@ pub fn inner_args(
   Ok(list.flatten([["test", "--target", target, "--"], flags]))
 }
 
+// Both `--target=x` and `--target x` are accepted, matching the build
+// tool's own flag — this is the one option that mirrors gleam's CLI
+// rather than vouch's `=`-only vocabulary.
 fn split_target(
   args: List(String),
   target: Option(String),
@@ -184,13 +187,14 @@ fn split_target(
 ) -> Result(#(Option(String), List(String)), String) {
   case args {
     [] -> Ok(#(target, list.reverse(acc)))
-    ["--target=" <> t, ..rest] ->
+    ["--target=" <> t, ..rest] | ["--target", t, ..rest] ->
       case t, target {
         "erlang", None | "javascript", None -> split_target(rest, Some(t), acc)
         _, Some(_) -> Error("vouch: only one --target is supported")
         _, None ->
           Error("vouch: --target expects erlang or javascript, got: " <> t)
       }
+    ["--target"] -> Error("vouch: --target expects erlang or javascript")
     [arg, ..rest] -> split_target(rest, target, [arg, ..acc])
   }
 }

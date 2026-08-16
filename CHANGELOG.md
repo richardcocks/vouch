@@ -10,7 +10,8 @@ their `gleam.toml`.
 
 The inner test runs now follow the watcher's own target by default;
 pass `--target=erlang|javascript` after the `--` to run them on a
-different target than the watcher.
+different target than the watcher. Both `--target=x` and `--target x`
+spellings are accepted, matching gleam's own flag.
 
 On the JavaScript host, watch mode now has the core Jest/Vitest keys:
 Enter forces a rerun, `a` runs the whole suite, `q` (or Ctrl+C) quits —
