@@ -3,7 +3,10 @@
 // a test, reporting, exit codes) belong to Gleam. The *_test suffix checks
 // are deliberately duplicated here: filtering before the dynamic import is
 // what keeps non-test modules from ever being loaded.
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, statSync, readdirSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { Worker } from "node:worker_threads";
+import { isatty } from "node:tty";
 import { Result$Ok, Result$Error, List$Empty, List$NonEmpty } from "./gleam.mjs";
 import {
   GleamPanic$GleamPanic,
@@ -64,9 +67,9 @@ export function is_erlang() {
   return false;
 }
 
-// Stubs for the Erlang-only primitives (process isolation, parallelism,
-// watch mode). Unreachable: runner.run and watch.run dispatch on
-// is_erlang() before any of these can be called.
+// Stubs for the Erlang-only primitives (process isolation, parallelism).
+// Unreachable: runner.run dispatches on is_erlang() before any of these
+// can be called.
 function erlangOnly(name) {
   throw new Error(`vouch: ${name} is only available on the Erlang target`);
 }
@@ -99,25 +102,212 @@ export function schedulers_online() {
   erlangOnly("schedulers_online");
 }
 
-export function file_snapshot(_roots) {
-  erlangOnly("file_snapshot");
+// Watch mode primitives. The Gleam supervisor loop is synchronous, so these
+// deliberately block — spawnSync for the inner run, Atomics.wait for the
+// poll interval. Anything async could never fire anyway: the loop never
+// returns to the event loop.
+
+// One row per watched file: [path, mtime, size], sorted by path. The mtime
+// is target-local (milliseconds here, gregorian seconds on Erlang):
+// snapshots are only ever compared for equality, and the size column still
+// guards same-tick rewrites.
+export function file_snapshot(roots) {
+  const rows = [];
+  for (const root of roots) {
+    collectSnapshotRows(root, rows);
+  }
+  rows.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  let list = List$Empty();
+  let i = rows.length;
+  while (i--) {
+    list = List$NonEmpty(rows[i], list);
+  }
+  return list;
 }
 
-export function run_passthrough(_command, _args) {
-  erlangOnly("run_passthrough");
+function collectSnapshotRows(path, rows) {
+  try {
+    const stats = statSync(path, { throwIfNoEntry: false });
+    if (stats === undefined) return;
+    if (stats.isDirectory()) {
+      for (const entry of readdirSync(path)) {
+        collectSnapshotRows(`${path}/${entry}`, rows);
+      }
+    } else {
+      rows.push([path, Math.floor(stats.mtimeMs), stats.size]);
+    }
+  } catch {
+    // Deleted mid-walk: contribute nothing, the next poll sees the truth.
+  }
 }
 
-export function sleep_ms(_ms) {
-  erlangOnly("sleep_ms");
+// All three stdio streams are inherited, so the inner run sees exactly
+// the environment the watcher itself got. Anything else for stdin
+// manufactures a combination a BEAM inner run cannot survive on
+// Windows: with stdout a console, OTP 28's prim_tty SetConsoleMode's
+// the stdin handle at startup and crashes user_drv with
+// SetConsoleModeInitIn "The handle is invalid" unless stdin is a
+// console too — verified for both "ignore" and "pipe" stdin, while
+// inherited console stdin runs clean. The cost is that an Erlang inner
+// run's console reader may swallow keys typed mid-run; keys are
+// best-effort during runs anyway. Error(Nil) only for "not found" —
+// anything else (notably Deno's NotCapable when allow_run is missing)
+// is rethrown so the runtime's own diagnostic surfaces. No shell: on
+// Windows this resolves gleam.exe via PATH but would miss a .cmd shim,
+// which gleam does not ship as.
+export function run_passthrough(command, args) {
+  // Hand the console back for the duration of the run: raw mode off
+  // restores native Ctrl+C, which kills watcher and child together.
+  setRawMode(false);
+  try {
+    const result = spawnSync(command, [...args], {
+      stdio: ["inherit", "inherit", "inherit"],
+    });
+    if (result.error) {
+      if (result.error.code === "ENOENT") return Result$Error(undefined);
+      throw result.error;
+    }
+    // status is null when the child dies to a signal; the watcher is about
+    // to die to the same Ctrl+C, so the fallback is a formality.
+    return Result$Ok(result.status ?? 1);
+  } finally {
+    setRawMode(true);
+  }
 }
 
+// Atomics.wait needs a SharedArrayBuffer view, allocated lazily so
+// ordinary test runs never touch SharedArrayBuffer. When the watch keys
+// are installed the wait moves to their shared buffer instead, so a
+// keypress can Atomics.notify the sleeping watcher awake immediately.
+let sleeper;
+
+export function sleep_ms(ms) {
+  if (watchShared !== null) {
+    Atomics.wait(watchShared, 0, 0, ms);
+    return;
+  }
+  sleeper ??= new Int32Array(new SharedArrayBuffer(4));
+  Atomics.wait(sleeper, 0, 0, ms);
+}
+
+// Interactive watch keys, following the Jest/Vitest vocabulary. The main
+// thread spends its whole life blocked (Atomics.wait between runs,
+// spawnSync during them), so it can never hear stdin; a worker thread
+// owns the tty instead and posts one command byte into the buffer
+// sleep_ms waits on. The worker's event loop is alive even while the
+// main thread blocks, so it uses the ordinary Node tty machinery — a
+// tty.ReadStream over fd 0 with the worker's own setRawMode. It must be
+// the worker's: raw mode flipped from the main thread's stream governs
+// only that stream's reads on Windows, not the worker's view of the
+// console (verified — main-thread setRawMode left the worker's reads
+// line-buffered, taking q + Enter + Enter to quit).
+//
+// Raw mode is only engaged between runs — during a run the console is
+// back to normal, so Ctrl+C keeps its native kill-everything behaviour;
+// between runs the worker sees the raw 0x03 byte itself, restores the
+// terminal, and treats it as quit.
+//
+// Shared buffer slots: [0] the sleep/wake futex, [1] the pending command
+// (0 none, 1 Enter, 2 "a", 3 quit).
+let watchShared = null;
+let watchWorker = null;
+
+const KEY_WORKER = `
+const { workerData, parentPort } = require("node:worker_threads");
+const tty = require("node:tty");
+const view = new Int32Array(workerData);
+const stream = new tty.ReadStream(0);
+stream.setRawMode(true);
+stream.on("error", () => {});
+stream.on("data", (buf) => {
+  for (const byte of buf) {
+    let command = 0;
+    if (byte === 0x0d || byte === 0x0a) command = 1; // Enter
+    else if (byte === 0x61 || byte === 0x41) command = 2; // a
+    else if (byte === 0x71 || byte === 0x51 || byte === 0x03) command = 3; // q, Ctrl+C
+    if (command !== 0) {
+      if (command === 3) {
+        // The main thread exits on the spot when it wakes; hand the
+        // terminal back before telling it to.
+        try { stream.setRawMode(false); } catch {}
+      }
+      // First unconsumed key wins, so a cooked-mode "a" + Enter is "a".
+      Atomics.compareExchange(view, 1, 0, command);
+      Atomics.notify(view, 0);
+    }
+  }
+});
+parentPort.on("message", (m) => {
+  if (m && typeof m.raw === "boolean") {
+    try { stream.setRawMode(m.raw); } catch {}
+  }
+});
+`;
+
+// Install the key worker. Needs a real console on stdin and a runtime
+// whose worker_threads can drive a tty stream; anything short of that
+// (Deno gaps included) degrades to plain Ctrl+C — the loop itself never
+// depends on the keys, and keys_active reports what actually happened.
+// The main thread deliberately never touches process.stdin (not even
+// isTTY, which materialises the stream): the worker owns the tty.
 export function install_quit_hooks() {
-  erlangOnly("install_quit_hooks");
+  try {
+    if (!isatty(0)) return;
+    const shared = new Int32Array(new SharedArrayBuffer(8));
+    const worker = new Worker(KEY_WORKER, {
+      eval: true,
+      workerData: shared.buffer,
+    });
+    worker.unref();
+    worker.on("error", () => {
+      watchShared = null;
+      watchWorker = null;
+    });
+    watchShared = shared;
+    watchWorker = worker;
+  } catch {
+    watchShared = null;
+    watchWorker = null;
+  }
 }
 
-export function ensure_unicode_stdio() {
-  erlangOnly("ensure_unicode_stdio");
+function setRawMode(on) {
+  try {
+    watchWorker?.postMessage({ raw: on });
+  } catch {}
 }
+
+// The pending command, consumed. 0 when no key (or no keys installed) —
+// the Erlang side always answers 0 and keeps its own stdin quit listener.
+export function take_pending_key() {
+  if (watchShared === null) return 0;
+  return Atomics.exchange(watchShared, 1, 0);
+}
+
+export function keys_active() {
+  return watchShared !== null;
+}
+
+// Immediate exit for the watch loop. halt() defers its exit to a stdout
+// write callback so a piped JSONL stream flushes fully — but that
+// callback can only run once the stack unwinds to the event loop, and
+// the synchronous watch loop never unwinds: a deferred halt there just
+// returns and the loop keeps going. Watch quit happens on a real console
+// (the keys only install on a TTY), where writes land synchronously, so
+// there is nothing buffered to lose by exiting on the spot. Terminal
+// mode needs no restoring here: the key worker hands the console back
+// itself before posting a quit command.
+export function halt_now(code) {
+  if (globalThis.Deno) {
+    Deno.exit(code);
+  } else {
+    process.exit(code);
+  }
+}
+
+// Node and Deno write UTF-8 to stdout/stderr regardless of redirection;
+// the latin1 hazard this guards against is BEAM-specific.
+export function ensure_unicode_stdio() {}
 
 export function now_microseconds() {
   return Math.round(performance.now() * 1000);

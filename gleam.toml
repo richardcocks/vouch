@@ -12,11 +12,13 @@ repository = { type = "github", user = "richardcocks", repo = "vouch" }
 # These cover vouch's own suite under Deno; consumers set the same keys in
 # their own gleam.toml (see README, "Target differences"). "src" is read for
 # source quoting when a failure points into application code; write access
-# to the project is what lets --junit=path produce its report.
+# to the project is what lets --junit=path produce its report; "gleam" may
+# be run because watch mode spawns the inner `gleam test` cycles.
 [javascript.deno]
 allow_read = ["gleam.toml", "src", "test", "build"]
 allow_write = ["."]
 allow_env = ["NO_COLOR"]
+allow_run = ["gleam"]
 
 [dependencies]
 gleam_stdlib = ">= 1.0.0 and < 2.0.0"

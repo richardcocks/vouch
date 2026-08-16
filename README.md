@@ -57,11 +57,24 @@ gleam run -m vouch -- watch             # rerun the suite on file change
 ### Watch mode
 
 `gleam run -m vouch -- watch [options]` reruns the suite whenever there are changes in `src/`,
-`test/`, or `gleam.toml`.
+`test/`, or `gleam.toml`. It works on both targets, and the inner test runs follow the watcher's
+own target — so `gleam run --target javascript -m vouch -- watch` watches JavaScript tests
+without the BEAM installed. To run the watcher and the tests on different targets, pass
+`--target=erlang|javascript` after the `--`; it applies to the inner runs:
+`gleam run -m vouch -- watch --target=javascript` supervises JavaScript tests from the BEAM.
 
-Press `q` then Enter to quit. It's a bit awkward, but Ctrl+C is captured by the BEAM and 
-I couldn't get it to work properly and I don't have enough environments to test the specifics for trying to 
-overcome that issue.
+Keys depend on the host target:
+
+- **Erlang**: press `q` then Enter to quit. It's a bit awkward, but Ctrl+C is captured by the
+  BEAM and I couldn't get it to work properly and I don't have enough environments to test the
+  specifics for trying to overcome that issue.
+- **JavaScript**: the usual Jest/Vitest watch keys, single keypress, no Enter needed —
+  `Enter` forces a rerun, `a` runs the whole suite (the same thing until test filtering
+  exists), and `q` or Ctrl+C quits. If the keys can't be installed (stdin isn't a console),
+  Ctrl+C still quits.
+
+On Deno, watch mode also needs `allow_run = ["gleam"]` to spawn the inner runs (see
+"Target differences" below).
 
 ## Outcomes
 
@@ -80,10 +93,12 @@ Deno needs permissions in your project's `gleam.toml`.
 You need `allow_read` for discovery and source quoting.
 you need `allow_write` if you use `--junit` for XML report output
 You need `allow_env` for detecting `NO_COLOR` environemnt variable
+You need `allow_run` if you use watch mode, which spawns `gleam test` for each cycle
 
 ```toml
 [javascript.deno]
 allow_read = ["gleam.toml", "src", "test", "build"]
 allow_write = ["."]
 allow_env = ["NO_COLOR"]
+allow_run = ["gleam"]
 ```
