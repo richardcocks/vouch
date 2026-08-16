@@ -115,6 +115,10 @@ export function install_quit_hooks() {
   erlangOnly("install_quit_hooks");
 }
 
+export function ensure_unicode_stdio() {
+  erlangOnly("ensure_unicode_stdio");
+}
+
 export function now_microseconds() {
   return Math.round(performance.now() * 1000);
 }

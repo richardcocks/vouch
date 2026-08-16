@@ -1,6 +1,13 @@
 //// Watch mode's testable parts: the inner-command construction (pure) and
 //// filesystem snapshot change detection. The loop itself never returns, so
 //// it is exercised manually against examples/playground rather than here.
+//// Manual checks, run from examples/playground:
+////   - `gleam run -m vouch -- watch`: cycles on file changes; q + Enter
+////     quits; the status line shows the quit hint.
+////   - `gleam run -m vouch -- watch > log.txt`: must keep cycling rather
+////     than crash (a non-console stdin kills the BEAM io server if the
+////     quit listener reads it), log.txt gets UTF-8 with no ANSI codes,
+////     and the status line omits the quit hint.
 
 import gleam/list
 import vouch/internal/watch

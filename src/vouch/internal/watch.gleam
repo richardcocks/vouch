@@ -28,14 +28,22 @@ const poll_interval_ms = 250
 pub fn run(args: List(String)) -> Nil {
   case runner.target() {
     runner.Erlang -> {
-      install_quit_hooks()
+      ensure_unicode_stdio()
+      // The quit listener reads stdin, and on Windows that read crashes the
+      // BEAM's io server outright when the console is redirected — taking
+      // every later print down with it. Interactive terminals only.
+      let interactive = term.is_stdout_tty()
+      case interactive {
+        True -> install_quit_hooks()
+        False -> Nil
+      }
       let color = term.should_use_color(config.Auto)
       case inner_args(args, color) {
         Error(message) -> {
           io.println_error(message)
           runner.halt(2)
         }
-        Ok(inner) -> loop(inner, color, 1)
+        Ok(inner) -> loop(inner, color, interactive, 1)
       }
     }
     runner.JavaScript -> {
@@ -49,7 +57,12 @@ pub fn run(args: List(String)) -> Nil {
   }
 }
 
-fn loop(inner: List(String), color: Bool, run_number: Int) -> Nil {
+fn loop(
+  inner: List(String),
+  color: Bool,
+  interactive: Bool,
+  run_number: Int,
+) -> Nil {
   // Snapshot before running, so edits made while tests execute still
   // trigger the next cycle.
   let before = snapshot(watched)
@@ -65,9 +78,9 @@ fn loop(inner: List(String), color: Bool, run_number: Int) -> Nil {
       runner.halt(2)
     }
     Ok(code) -> {
-      print_status(code, color)
+      print_status(code, color, interactive)
       wait_for_change(before)
-      loop(inner, color, run_number + 1)
+      loop(inner, color, interactive, run_number + 1)
     }
   }
 }
@@ -80,10 +93,15 @@ fn wait_for_change(before: List(#(String, Int, Int))) -> Nil {
   }
 }
 
-fn print_status(code: Int, color: Bool) -> Nil {
+fn print_status(code: Int, color: Bool, interactive: Bool) -> Nil {
   let verdict = case code {
     0 -> paint(color, green, "passing")
     _ -> paint(color, red, "failing (exit " <> int.to_string(code) <> ")")
+  }
+  // The quit hint only holds when the listener was installed.
+  let quit_hint = case interactive {
+    True -> " · q then Enter to quit"
+    False -> ""
   }
   io.println("")
   io.println(
@@ -91,7 +109,7 @@ fn print_status(code: Int, color: Bool) -> Nil {
     <> paint(
       color,
       dim,
-      " · watching " <> string.join(watched, ", ") <> " · q then Enter to quit",
+      " · watching " <> string.join(watched, ", ") <> quit_hint,
     ),
   )
 }
@@ -180,3 +198,7 @@ fn sleep_ms(ms: Int) -> Nil
 @external(erlang, "vouch_ffi", "install_quit_hooks")
 @external(javascript, "../../vouch_ffi.mjs", "install_quit_hooks")
 fn install_quit_hooks() -> Nil
+
+@external(erlang, "vouch_ffi", "ensure_unicode_stdio")
+@external(javascript, "../../vouch_ffi.mjs", "ensure_unicode_stdio")
+fn ensure_unicode_stdio() -> Nil

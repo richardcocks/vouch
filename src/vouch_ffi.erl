@@ -16,6 +16,7 @@
     run_passthrough/2,
     sleep_ms/1,
     install_quit_hooks/0,
+    ensure_unicode_stdio/0,
     start_test/3,
     await_test/1,
     schedulers_online/0,
@@ -323,6 +324,16 @@ drain_through(Port) ->
 sleep_ms(Ms) ->
     receive after Ms -> nil end.
 
+%% Watch mode prints non-ASCII glyphs. Terminals get unicode encoding
+%% by default, but a redirected stream can come up latin1 (the pre-OTP-26
+%% default off a tty, and C locales since), where those glyphs raise
+%% no_translation instead of printing. Pin both standard streams to
+%% unicode so redirected output degrades to UTF-8 bytes in a file.
+ensure_unicode_stdio() ->
+    catch io:setopts(standard_io, [{encoding, unicode}]),
+    catch io:setopts(standard_error, [{encoding, unicode}]),
+    nil.
+
 %% Quitting the watch loop: a stdin listener that halts on "q" + Enter.
 %% This is the only clean quit the BEAM allows a long-running foreground
 %% program: SIGINT belongs to the emulator's break handler and cannot be
@@ -332,6 +343,11 @@ sleep_ms(Ms) ->
 %% their ports get pipes. eof means stdin is not interactive (piped or
 %% closed), so the listener just retires rather than treating it as a
 %% quit.
+%%
+%% Callers must only install this when stdout is a terminal: with stdout
+%% redirected on Windows, the read itself is fatal — prim_tty's reader
+%% dies on ReadConsoleW before ever returning eof, and its crash takes
+%% user_drv (and with it every subsequent stdout write) down too.
 install_quit_hooks() ->
     spawn(fun quit_listener/0),
     nil.

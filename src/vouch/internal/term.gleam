@@ -24,9 +24,12 @@ pub fn should_use_color(choice: config.ColorChoice) -> Bool {
   }
 }
 
+/// Whether stdout is an interactive terminal, independent of the colour
+/// decision (NO_COLOR suppresses colour on a terminal that is still
+/// interactive).
 @external(erlang, "vouch_ffi", "is_stdout_tty")
 @external(javascript, "../../vouch_ffi.mjs", "is_stdout_tty")
-fn is_stdout_tty() -> Bool
+pub fn is_stdout_tty() -> Bool
 
 @external(erlang, "vouch_ffi", "env")
 @external(javascript, "../../vouch_ffi.mjs", "env")
