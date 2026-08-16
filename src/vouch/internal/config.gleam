@@ -112,8 +112,7 @@ fn set_filter(
 ) -> Result(Config, String) {
   case config.filter {
     None -> parse(rest, Config(..config, filter: Some(pattern)))
-    Some(_) ->
-      Error(usage("only one --filter/--test-name-filter is supported"))
+    Some(_) -> Error(usage("only one --filter/--test-name-filter is supported"))
   }
 }
 

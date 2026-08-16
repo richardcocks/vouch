@@ -500,8 +500,7 @@ pub fn config_test_name_filter_alias_test() {
   assert config.from_args(["--test-name-filter=decode"])
     == config.from_args(["--filter=decode"])
   // The alias shares the single-filter guard with --filter.
-  let assert Error(_) =
-    config.from_args(["--filter=a", "--test-name-filter=b"])
+  let assert Error(_) = config.from_args(["--filter=a", "--test-name-filter=b"])
   let assert Error(_) =
     config.from_args(["--test-name-filter=a", "--test-name-filter=b"])
 }
