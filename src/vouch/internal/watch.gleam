@@ -26,8 +26,8 @@ const watched = ["gleam.toml", "src", "test"]
 const poll_interval_ms = 250
 
 pub fn run(args: List(String)) -> Nil {
-  case runner.is_erlang() {
-    True -> {
+  case runner.target() {
+    runner.Erlang -> {
       install_quit_hooks()
       let color = term.should_use_color(config.Auto)
       case inner_args(args, color) {
@@ -38,7 +38,7 @@ pub fn run(args: List(String)) -> Nil {
         Ok(inner) -> loop(inner, color, 1)
       }
     }
-    False -> {
+    runner.JavaScript -> {
       io.println_error(
         "vouch: watch mode runs on the Erlang target. It can still watch\n"
         <> "JavaScript-target tests — the target applies to the inner runs:\n\n"

@@ -82,13 +82,30 @@ pub fn halt(code: Int) -> Nil
 @external(javascript, "../../vouch_ffi.mjs", "now_microseconds")
 fn now_microseconds() -> Int
 
-/// True on the Erlang target. Per-target behaviour is chosen at runtime
-/// rather than with `@target` conditional compilation, so every function
-/// here compiles for both targets and the API is identical everywhere;
-/// the never-taken side of each split is an FFI stub.
+/// The target this build is running on. Per-target behaviour is chosen at
+/// runtime rather than with `@target` conditional compilation, so every
+/// function here compiles for both targets and the API is identical
+/// everywhere; the never-taken side of each split is an FFI stub. Dispatch
+/// sites match exhaustively, so a future target variant would surface
+/// every decision point as a compile error.
+pub type Target {
+  Erlang
+  JavaScript
+}
+
+pub fn target() -> Target {
+  case is_erlang() {
+    True -> Erlang
+    False -> JavaScript
+  }
+}
+
+// A Bool keeps the FFI contract trivial: constructing Target records from
+// the FFI would couple it to compiler-generated code. If a third target is
+// ever added it needs its own FFI file anyway; this gets replaced then.
 @external(erlang, "vouch_ffi", "is_erlang")
 @external(javascript, "../../vouch_ffi.mjs", "is_erlang")
-pub fn is_erlang() -> Bool
+fn is_erlang() -> Bool
 
 pub fn run(
   rep: Reporter(s),
@@ -96,9 +113,9 @@ pub fn run(
   timeout_ms: Int,
   parallel: config.Parallelism,
 ) -> Nil {
-  case is_erlang() {
-    True -> run_beam(rep, filter, timeout_ms, parallel)
-    False -> run_js(rep, filter, timeout_ms, parallel)
+  case target() {
+    Erlang -> run_beam(rep, filter, timeout_ms, parallel)
+    JavaScript -> run_js(rep, filter, timeout_ms, parallel)
   }
 }
 
