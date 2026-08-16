@@ -8,6 +8,10 @@ installed. Quitting is Ctrl+C on JavaScript (q then Enter on Erlang stays
 as it was). Deno projects using watch mode need `allow_run = ["gleam"]` in
 their `gleam.toml`.
 
+The inner test runs now follow the watcher's own target by default;
+pass `--target=erlang|javascript` after the `--` to run them on a
+different target than the watcher.
+
 ## v1.1.0
 
 Add --test-name-filter for startest compatibility to allow running in zed.

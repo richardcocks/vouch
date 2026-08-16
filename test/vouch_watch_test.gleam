@@ -8,52 +8,85 @@
 ////     than crash (a non-console stdin kills the BEAM io server if the
 ////     quit listener reads it), log.txt gets UTF-8 with no ANSI codes,
 ////     and the status line omits the quit hint.
-////   - `gleam run --target javascript -m vouch -- watch --target=javascript`:
-////     same cycling on the Node host; Ctrl+C quits, and the status line
-////     says so.
+////   - `gleam run --target javascript -m vouch -- watch`: same cycling on
+////     the Node host with JavaScript inner runs (they follow the
+////     watcher's target); Ctrl+C quits, and the status line says so.
 
 import gleam/list
+import vouch/internal/runner
 import vouch/internal/watch
 
 pub fn inner_args_default_test() {
-  assert watch.inner_args([], False) == Ok(["test", "--"])
+  // No explicit --target: the inner run follows the watcher's own target.
+  assert watch.inner_args([], False, runner.Erlang)
+    == Ok(["test", "--target", "erlang", "--"])
+}
+
+pub fn inner_args_follows_javascript_host_test() {
+  assert watch.inner_args([], False, runner.JavaScript)
+    == Ok(["test", "--target", "javascript", "--"])
 }
 
 pub fn inner_args_passes_flags_through_test() {
-  assert watch.inner_args(["--filter=slow", "--timeout=100"], False)
-    == Ok(["test", "--", "--filter=slow", "--timeout=100"])
+  assert watch.inner_args(
+      ["--filter=slow", "--timeout=100"],
+      False,
+      runner.Erlang,
+    )
+    == Ok(["test", "--target", "erlang", "--", "--filter=slow", "--timeout=100"])
 }
 
 pub fn inner_args_injects_color_for_tty_test() {
   // The inner run only sees a pipe, so a colour terminal must be pinned.
-  assert watch.inner_args(["--filter=slow"], True)
-    == Ok(["test", "--", "--filter=slow", "--color=always"])
+  assert watch.inner_args(["--filter=slow"], True, runner.Erlang)
+    == Ok([
+      "test",
+      "--target",
+      "erlang",
+      "--",
+      "--filter=slow",
+      "--color=always",
+    ])
 }
 
 pub fn inner_args_respects_explicit_color_test() {
-  assert watch.inner_args(["--color=never"], True)
-    == Ok(["test", "--", "--color=never"])
+  assert watch.inner_args(["--color=never"], True, runner.Erlang)
+    == Ok(["test", "--target", "erlang", "--", "--color=never"])
 }
 
 pub fn inner_args_hoists_target_test() {
   // --target belongs to the build tool, before the `--`.
-  assert watch.inner_args(["--target=javascript", "--filter=x"], False)
+  assert watch.inner_args(
+      ["--target=javascript", "--filter=x"],
+      False,
+      runner.Erlang,
+    )
     == Ok(["test", "--target", "javascript", "--", "--filter=x"])
 }
 
+pub fn inner_args_explicit_target_beats_host_test() {
+  assert watch.inner_args(["--target=erlang"], False, runner.JavaScript)
+    == Ok(["test", "--target", "erlang", "--"])
+}
+
 pub fn inner_args_rejects_unknown_target_test() {
-  let assert Error(_) = watch.inner_args(["--target=python"], False)
+  let assert Error(_) =
+    watch.inner_args(["--target=python"], False, runner.Erlang)
 }
 
 pub fn inner_args_rejects_repeated_target_test() {
   let assert Error(_) =
-    watch.inner_args(["--target=erlang", "--target=javascript"], False)
+    watch.inner_args(
+      ["--target=erlang", "--target=javascript"],
+      False,
+      runner.Erlang,
+    )
 }
 
 pub fn inner_args_rejects_unknown_flag_test() {
   // Validated once at startup with the inner run's own parser, so a typo
   // fails loudly instead of on every cycle.
-  let assert Error(_) = watch.inner_args(["--wibble"], False)
+  let assert Error(_) = watch.inner_args(["--wibble"], False, runner.Erlang)
 }
 
 pub fn snapshot_walks_directories_test() {

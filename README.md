@@ -57,9 +57,11 @@ gleam run -m vouch -- watch             # rerun the suite on file change
 ### Watch mode
 
 `gleam run -m vouch -- watch [options]` reruns the suite whenever there are changes in `src/`,
-`test/`, or `gleam.toml`. It works on both targets, and `--target=erlang|javascript` selects the
-target of the inner test runs — so `gleam run --target javascript -m vouch -- watch --target=javascript`
-watches JavaScript tests without the BEAM installed.
+`test/`, or `gleam.toml`. It works on both targets, and the inner test runs follow the watcher's
+own target — so `gleam run --target javascript -m vouch -- watch` watches JavaScript tests
+without the BEAM installed. To run the watcher and the tests on different targets, pass
+`--target=erlang|javascript` after the `--`; it applies to the inner runs:
+`gleam run -m vouch -- watch --target=javascript` supervises JavaScript tests from the BEAM.
 
 Quitting depends on the host target:
 

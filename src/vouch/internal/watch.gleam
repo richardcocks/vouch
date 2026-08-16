@@ -37,7 +37,7 @@ pub fn run(args: List(String)) -> Nil {
     False -> Nil
   }
   let color = term.should_use_color(config.Auto)
-  case inner_args(args, color) {
+  case inner_args(args, color, runner.target()) {
     Error(message) -> {
       io.println_error(message)
       runner.halt(2)
@@ -114,9 +114,18 @@ fn print_status(code: Int, color: Bool, interactive: Bool) -> Nil {
 /// parser the inner run will use (so mistakes fail once, loudly, instead
 /// of on every cycle), and appends `--color=always` when the watcher's
 /// terminal renders colour and the user did not choose otherwise.
+///
+/// The inner target defaults to the watcher's own target, so
+/// `gleam run --target javascript -m vouch -- watch` watches JavaScript
+/// tests without saying "javascript" twice. An explicit `--target=x`
+/// after the `--` still overrides — an Erlang-hosted watcher can drive
+/// JavaScript runs and vice versa. The target is always passed to the
+/// inner run explicitly: when neither flag was given, the watcher's
+/// target is the project default anyway, so pinning it changes nothing.
 pub fn inner_args(
   args: List(String),
   color: Bool,
+  host: runner.Target,
 ) -> Result(List(String), String) {
   use #(target, flags) <- result.try(split_target(args, None, []))
   let flags = case color && !has_color_flag(flags) {
@@ -124,11 +133,12 @@ pub fn inner_args(
     False -> flags
   }
   use _ <- result.try(config.from_args(flags))
-  let target_args = case target {
-    None -> []
-    Some(t) -> ["--target", t]
+  let target = case target, host {
+    Some(t), _ -> t
+    None, runner.Erlang -> "erlang"
+    None, runner.JavaScript -> "javascript"
   }
-  Ok(list.flatten([["test"], target_args, ["--"], flags]))
+  Ok(list.flatten([["test", "--target", target, "--"], flags]))
 }
 
 fn split_target(

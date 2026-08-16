@@ -85,9 +85,12 @@ Shipped as `gleam run -m vouch -- watch [options]` — the lustre_dev_tools
 pattern: the watcher is honestly a separate program, hosted initially on
 the BEAM and since ported to the JavaScript target too. Dispatch is on
 the first positional argument, so `gleam test -- watch` reaches the same
-loop; a `--target=javascript` argument is hoisted to the build tool's
-side of the inner invocation, so either host can watch either target's
-suites.
+loop. The inner runs follow the watcher's own target by default (saying
+"javascript" twice to watch JavaScript tests proved an immediate
+footgun: the outer flag alone left the inner runs on the project
+default, surprising the first real user); an explicit `--target=x`
+after the `--` is hoisted to the build tool's side of the inner
+invocation, so either host can still watch either target's suites.
 
 `gleam test --watch` literally cannot exist without upstream toolchain
 changes — flags before `--` belong to the build tool. More fundamentally,
