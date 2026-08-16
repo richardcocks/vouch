@@ -61,11 +61,12 @@ fn parse(args: List(String), config: Config) -> Result(Config, String) {
     ["--format=json", ..rest] -> parse(rest, Config(..config, format: Json))
     ["--format=teamcity", ..rest] ->
       parse(rest, Config(..config, format: TeamCity))
-    ["--filter=" <> pattern, ..rest] ->
-      case config.filter {
-        None -> parse(rest, Config(..config, filter: Some(pattern)))
-        Some(_) -> Error(usage("only one --filter is supported"))
-      }
+    ["--filter=" <> pattern, ..rest] -> set_filter(rest, config, pattern)
+    // Alias for --filter. Zed's Gleam extension runs the test under the
+    // cursor as `gleam test -- --test-name-filter=<function>` (Startest's
+    // flag name), so accepting it makes Zed's click-to-run work.
+    ["--test-name-filter=" <> pattern, ..rest] ->
+      set_filter(rest, config, pattern)
     ["--color=auto", ..rest] -> parse(rest, Config(..config, color: Auto))
     ["--color=always", ..rest] -> parse(rest, Config(..config, color: Always))
     ["--color=never", ..rest] -> parse(rest, Config(..config, color: Never))
@@ -104,11 +105,25 @@ fn parse(args: List(String), config: Config) -> Result(Config, String) {
   }
 }
 
+fn set_filter(
+  rest: List(String),
+  config: Config,
+  pattern: String,
+) -> Result(Config, String) {
+  case config.filter {
+    None -> parse(rest, Config(..config, filter: Some(pattern)))
+    Some(_) ->
+      Error(usage("only one --filter/--test-name-filter is supported"))
+  }
+}
+
 fn usage(problem: String) -> String {
   "vouch: "
   <> problem
   <> "\n\nUsage: gleam test -- [options]\n"
   <> "  --filter=text   run only tests whose module.function contains text\n"
+  <> "  --test-name-filter=text\n"
+  <> "                  alias for --filter, as sent by Zed's run-test task\n"
   <> "  --format=json   emit a JSONL event stream instead of console output\n"
   <> "  --format=teamcity\n"
   <> "                  emit TeamCity service messages instead of console\n"
