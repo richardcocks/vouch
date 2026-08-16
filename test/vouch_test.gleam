@@ -495,6 +495,16 @@ pub fn config_format_and_filter_test() {
     ))
 }
 
+pub fn config_test_name_filter_alias_test() {
+  // Zed's Gleam extension runs `gleam test -- --test-name-filter=<function>`.
+  assert config.from_args(["--test-name-filter=decode"])
+    == config.from_args(["--filter=decode"])
+  // The alias shares the single-filter guard with --filter.
+  let assert Error(_) = config.from_args(["--filter=a", "--test-name-filter=b"])
+  let assert Error(_) =
+    config.from_args(["--test-name-filter=a", "--test-name-filter=b"])
+}
+
 pub fn config_teamcity_format_test() {
   let assert Ok(config.Config(format: config.TeamCity, ..)) =
     config.from_args(["--format=teamcity"])
