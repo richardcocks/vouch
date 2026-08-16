@@ -13,24 +13,32 @@ run_command(Command, Args, Dir) ->
                 {args, [unicode:characters_to_list(A) || A <- Args]},
                 {cd, unicode:characters_to_list(Dir)},
                 exit_status,
+                eof,
                 binary,
                 hide
             ]),
-            collect(Port, [])
+            collect(Port, [], undefined, false)
     end.
 
-collect(Port, Acc) ->
+%% Data messages arrive in stream order and eof marks the end of the
+%% stream, but exit_status is delivered independently: the docs leave its
+%% order relative to eof unspecified, and it can overtake data still in
+%% flight. Waiting for both eof and exit_status is the only way to get the
+%% complete stream alongside the code.
+collect(Port, Acc, Code, GotEof) ->
     receive
         {Port, {data, Data}} ->
-            collect(Port, [Data | Acc]);
-        {Port, {exit_status, Code}} ->
-            Output = drain(Port, Acc),
-            {ok, {Code, unicode:characters_to_binary(lists:reverse(Output))}}
+            collect(Port, [Data | Acc], Code, GotEof);
+        {Port, eof} when Code =/= undefined ->
+            finish(Port, Acc, Code);
+        {Port, eof} ->
+            collect(Port, Acc, Code, true);
+        {Port, {exit_status, Status}} when GotEof ->
+            finish(Port, Acc, Status);
+        {Port, {exit_status, Status}} ->
+            collect(Port, Acc, Status, false)
     end.
 
-drain(Port, Acc) ->
-    receive
-        {Port, {data, Data}} -> drain(Port, [Data | Acc])
-    after 0 ->
-        Acc
-    end.
+finish(Port, Acc, Code) ->
+    catch port_close(Port),
+    {ok, {Code, unicode:characters_to_binary(lists:reverse(Acc))}}.

@@ -80,7 +80,16 @@ redirect_diagnostics_to_stderr() ->
             NewCfg0 = Cfg#{config := HConfig#{type => standard_error}},
             NewCfg = maps:remove(id, maps:remove(module, NewCfg0)),
             logger:remove_handler(default),
-            logger:add_handler(default, Module, NewCfg);
+            case logger:add_handler(default, Module, NewCfg) of
+                ok ->
+                    ok;
+                _ ->
+                    %% The reconstructed config was rejected. A fresh
+                    %% stderr handler beats both no handler (reports
+                    %% lost) and the old one (reports on stdout).
+                    logger:add_handler(default, logger_std_h,
+                        #{config => #{type => standard_error}})
+            end;
         _ ->
             ok
     end,
@@ -288,6 +297,9 @@ snapshot_entry(Path) ->
 %% Spawn a command with its stdout streamed through to ours as chunks
 %% arrive; stderr is inherited by the child directly, so build-tool
 %% diagnostics keep their usual destination. Returns the exit code.
+%% exit_status can overtake data still in flight (its order relative to
+%% the stream is unspecified), so the port is opened with eof and the
+%% loop runs until both the stream end and the exit code have arrived.
 run_passthrough(Command, Args) ->
     case os:find_executable(unicode:characters_to_list(Command)) of
         false ->
@@ -296,29 +308,28 @@ run_passthrough(Command, Args) ->
             Port = open_port({spawn_executable, Exe}, [
                 {args, [unicode:characters_to_list(A) || A <- Args]},
                 exit_status,
+                eof,
                 binary,
                 hide
             ]),
-            stream_through(Port)
+            stream_through(Port, undefined, false)
     end.
 
-stream_through(Port) ->
+stream_through(Port, Code, GotEof) ->
     receive
         {Port, {data, Data}} ->
             io:put_chars(Data),
-            stream_through(Port);
-        {Port, {exit_status, Code}} ->
-            drain_through(Port),
-            {ok, Code}
-    end.
-
-drain_through(Port) ->
-    receive
-        {Port, {data, Data}} ->
-            io:put_chars(Data),
-            drain_through(Port)
-    after 0 ->
-        ok
+            stream_through(Port, Code, GotEof);
+        {Port, eof} when Code =/= undefined ->
+            catch port_close(Port),
+            {ok, Code};
+        {Port, eof} ->
+            stream_through(Port, Code, true);
+        {Port, {exit_status, Status}} when GotEof ->
+            catch port_close(Port),
+            {ok, Status};
+        {Port, {exit_status, Status}} ->
+            stream_through(Port, Status, GotEof)
     end.
 
 sleep_ms(Ms) ->
