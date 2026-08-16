@@ -141,24 +141,27 @@ function collectSnapshotRows(path, rows) {
   }
 }
 
-// Output is inherited so the inner run streams straight to the terminal;
-// stdin is a pipe the watcher never writes, so inner runs get a valid
-// handle that immediately reads EOF without contending for the console —
-// the same deal the Erlang port gives them. Not "ignore": on Windows
-// that hands the child an invalid stdin handle, and a BEAM inner run's
-// prim_tty SetConsoleMode's it at startup when stdout is a console,
-// crashing user_drv with SetConsoleModeInitIn "The handle is invalid".
-// Error(Nil) only for "not found" — anything else (notably Deno's
-// NotCapable when allow_run is missing) is rethrown so the runtime's own
-// diagnostic surfaces. No shell: on Windows this resolves gleam.exe via
-// PATH but would miss a .cmd shim, which gleam does not ship as.
+// All three stdio streams are inherited, so the inner run sees exactly
+// the environment the watcher itself got. Anything else for stdin
+// manufactures a combination a BEAM inner run cannot survive on
+// Windows: with stdout a console, OTP 28's prim_tty SetConsoleMode's
+// the stdin handle at startup and crashes user_drv with
+// SetConsoleModeInitIn "The handle is invalid" unless stdin is a
+// console too — verified for both "ignore" and "pipe" stdin, while
+// inherited console stdin runs clean. The cost is that an Erlang inner
+// run's console reader may swallow keys typed mid-run; keys are
+// best-effort during runs anyway. Error(Nil) only for "not found" —
+// anything else (notably Deno's NotCapable when allow_run is missing)
+// is rethrown so the runtime's own diagnostic surfaces. No shell: on
+// Windows this resolves gleam.exe via PATH but would miss a .cmd shim,
+// which gleam does not ship as.
 export function run_passthrough(command, args) {
   // Hand the console back for the duration of the run: raw mode off
   // restores native Ctrl+C, which kills watcher and child together.
   setRawMode(false);
   try {
     const result = spawnSync(command, [...args], {
-      stdio: ["pipe", "inherit", "inherit"],
+      stdio: ["inherit", "inherit", "inherit"],
     });
     if (result.error) {
       if (result.error.code === "ENOENT") return Result$Error(undefined);
