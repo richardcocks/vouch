@@ -157,13 +157,17 @@ exactly the one the JavaScript host gets for free.
 The JavaScript host also carries the core Jest/Vitest watch keys (Enter
 to force a rerun, `a` to run all — distinct commands even while they
 coincide, so filtering can later hang off the difference — `q` to quit).
-The blocked main thread still can't hear stdin, so a worker thread does
-the blocking fd-0 reads and posts one command byte into the same shared
-buffer the poll sleep waits on; `Atomics.notify` wakes the watcher
-instantly. Raw mode (single keypress, no Enter) is only engaged between
-runs — during a run the console reverts, keeping native Ctrl+C's
+The blocked main thread still can't hear stdin, so a worker thread owns
+the tty — a `tty.ReadStream` over fd 0 driven by the worker's own live
+event loop — and posts one command byte into the same shared buffer the
+poll sleep waits on; `Atomics.notify` wakes the watcher instantly. Raw
+mode must belong to the worker's stream: flipping it from the main
+thread's stream governs only that stream's reads on Windows, not the
+worker's view of the console (found the hard way — q took two Enters).
+Raw mode (single keypress, no Enter) is only engaged between runs —
+during a run the console reverts, keeping native Ctrl+C's
 kill-the-run-too behaviour; between runs the worker sees the raw 0x03
-byte and treats it as quit. Anything that blocks installation (stdin not
+byte, hands the terminal back, and treats it as quit. Anything that blocks installation (stdin not
 a console, worker gaps in a runtime) degrades back to Ctrl+C-only, and
 the status line reports whichever mode actually engaged.
 

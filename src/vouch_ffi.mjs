@@ -6,6 +6,7 @@
 import { readFileSync, writeFileSync, statSync, readdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { Worker } from "node:worker_threads";
+import { isatty } from "node:tty";
 import { Result$Ok, Result$Error, List$Empty, List$NonEmpty } from "./gleam.mjs";
 import {
   GleamPanic$GleamPanic,
@@ -183,59 +184,67 @@ export function sleep_ms(ms) {
 
 // Interactive watch keys, following the Jest/Vitest vocabulary. The main
 // thread spends its whole life blocked (Atomics.wait between runs,
-// spawnSync during them), so it can never hear stdin events; a worker
-// thread does blocking reads of fd 0 instead and posts one command byte
-// into the buffer sleep_ms waits on. Raw mode is only enabled between
-// runs — during a run the console is back to normal, so Ctrl+C keeps its
-// native kill-everything behaviour; between runs the worker sees the raw
-// 0x03 byte itself and treats it as quit.
+// spawnSync during them), so it can never hear stdin; a worker thread
+// owns the tty instead and posts one command byte into the buffer
+// sleep_ms waits on. The worker's event loop is alive even while the
+// main thread blocks, so it uses the ordinary Node tty machinery — a
+// tty.ReadStream over fd 0 with the worker's own setRawMode. It must be
+// the worker's: raw mode flipped from the main thread's stream governs
+// only that stream's reads on Windows, not the worker's view of the
+// console (verified — main-thread setRawMode left the worker's reads
+// line-buffered, taking q + Enter + Enter to quit).
+//
+// Raw mode is only engaged between runs — during a run the console is
+// back to normal, so Ctrl+C keeps its native kill-everything behaviour;
+// between runs the worker sees the raw 0x03 byte itself, restores the
+// terminal, and treats it as quit.
 //
 // Shared buffer slots: [0] the sleep/wake futex, [1] the pending command
 // (0 none, 1 Enter, 2 "a", 3 quit).
 let watchShared = null;
+let watchWorker = null;
 
 const KEY_WORKER = `
-const { workerData } = require("node:worker_threads");
-const { readSync } = require("node:fs");
+const { workerData, parentPort } = require("node:worker_threads");
+const tty = require("node:tty");
 const view = new Int32Array(workerData);
-const buf = Buffer.alloc(64);
-const backoff = new Int32Array(new SharedArrayBuffer(4));
-for (;;) {
-  let n = 0;
-  try {
-    n = readSync(0, buf, 0, buf.length);
-  } catch (error) {
-    // The tty stream on the main thread can flip fd 0 non-blocking on
-    // POSIX; back off briefly instead of spinning.
-    if (error.code === "EAGAIN") {
-      Atomics.wait(backoff, 0, 0, 25);
-      continue;
-    }
-    break;
-  }
-  if (n <= 0) break; // eof: stdin closed, retire like the Erlang listener
-  for (let i = 0; i < n; i++) {
-    const byte = buf[i];
+const stream = new tty.ReadStream(0);
+stream.setRawMode(true);
+stream.on("error", () => {});
+stream.on("data", (buf) => {
+  for (const byte of buf) {
     let command = 0;
     if (byte === 0x0d || byte === 0x0a) command = 1; // Enter
     else if (byte === 0x61 || byte === 0x41) command = 2; // a
     else if (byte === 0x71 || byte === 0x51 || byte === 0x03) command = 3; // q, Ctrl+C
     if (command !== 0) {
-      // First unconsumed key wins, so a line-mode "a" + Enter reads as "a".
+      if (command === 3) {
+        // The main thread exits on the spot when it wakes; hand the
+        // terminal back before telling it to.
+        try { stream.setRawMode(false); } catch {}
+      }
+      // First unconsumed key wins, so a cooked-mode "a" + Enter is "a".
       Atomics.compareExchange(view, 1, 0, command);
       Atomics.notify(view, 0);
     }
   }
-}
+});
+parentPort.on("message", (m) => {
+  if (m && typeof m.raw === "boolean") {
+    try { stream.setRawMode(m.raw); } catch {}
+  }
+});
 `;
 
 // Install the key worker. Needs a real console on stdin and a runtime
-// whose worker_threads can block on fd 0; anything short of that (Deno
-// gaps included) degrades to plain Ctrl+C — the loop itself never
+// whose worker_threads can drive a tty stream; anything short of that
+// (Deno gaps included) degrades to plain Ctrl+C — the loop itself never
 // depends on the keys, and keys_active reports what actually happened.
+// The main thread deliberately never touches process.stdin (not even
+// isTTY, which materialises the stream): the worker owns the tty.
 export function install_quit_hooks() {
   try {
-    if (typeof process === "undefined" || !process.stdin.isTTY) return;
+    if (!isatty(0)) return;
     const shared = new Int32Array(new SharedArrayBuffer(8));
     const worker = new Worker(KEY_WORKER, {
       eval: true,
@@ -243,23 +252,21 @@ export function install_quit_hooks() {
     });
     worker.unref();
     worker.on("error", () => {
-      setRawMode(false);
       watchShared = null;
+      watchWorker = null;
     });
     watchShared = shared;
-    setRawMode(true);
+    watchWorker = worker;
   } catch {
     watchShared = null;
+    watchWorker = null;
   }
 }
 
 function setRawMode(on) {
-  if (watchShared === null) return;
   try {
-    process.stdin.setRawMode(on);
-  } catch {
-    // A console that refuses raw mode still delivers line-buffered keys.
-  }
+    watchWorker?.postMessage({ raw: on });
+  } catch {}
 }
 
 // The pending command, consumed. 0 when no key (or no keys installed) —
@@ -279,9 +286,10 @@ export function keys_active() {
 // the synchronous watch loop never unwinds: a deferred halt there just
 // returns and the loop keeps going. Watch quit happens on a real console
 // (the keys only install on a TTY), where writes land synchronously, so
-// there is nothing buffered to lose by exiting on the spot.
+// there is nothing buffered to lose by exiting on the spot. Terminal
+// mode needs no restoring here: the key worker hands the console back
+// itself before posting a quit command.
 export function halt_now(code) {
-  setRawMode(false);
   if (globalThis.Deno) {
     Deno.exit(code);
   } else {
