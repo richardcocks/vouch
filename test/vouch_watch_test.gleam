@@ -10,7 +10,11 @@
 ////     and the status line omits the quit hint.
 ////   - `gleam run --target javascript -m vouch -- watch`: same cycling on
 ////     the Node host with JavaScript inner runs (they follow the
-////     watcher's target); Ctrl+C quits, and the status line says so.
+////     watcher's target). Enter forces a rerun, `a` runs the whole
+////     suite, `q` or Ctrl+C quits — single keypress, no Enter — and the
+////     status line lists the keys. Ctrl+C mid-run still kills the run.
+////     With stdin redirected the keys degrade away and the status line
+////     falls back to "Ctrl+C to quit".
 
 import gleam/list
 import vouch/internal/runner

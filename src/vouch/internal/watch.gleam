@@ -30,7 +30,8 @@ pub fn run(args: List(String)) -> Nil {
   // The quit listener reads stdin, and on Windows that read crashes the
   // BEAM's io server outright when the console is redirected — taking
   // every later print down with it. Interactive terminals only. (On the
-  // JavaScript target install_quit_hooks is a no-op either way.)
+  // JavaScript target this installs the interactive key worker instead,
+  // which applies its own stdin-is-a-console guard.)
   let interactive = term.is_stdout_tty()
   case interactive {
     True -> install_quit_hooks()
@@ -76,9 +77,38 @@ fn loop(
 
 fn wait_for_change(before: List(#(String, Int, Int))) -> Nil {
   sleep_ms(poll_interval_ms)
-  case snapshot(watched) == before {
-    True -> wait_for_change(before)
-    False -> Nil
+  case pending_command() {
+    // Enter reruns with the current settings; `a` runs the full suite.
+    // They do the same thing until test filtering exists — then `a` will
+    // also clear the filter — but they are distinct commands on purpose,
+    // mirroring the Jest/Vitest watch keys.
+    ForceRerun -> Nil
+    RunAll -> Nil
+    Quit -> runner.halt(0)
+    NoCommand ->
+      case snapshot(watched) == before {
+        True -> wait_for_change(before)
+        False -> Nil
+      }
+  }
+}
+
+type WatchCommand {
+  NoCommand
+  ForceRerun
+  RunAll
+  Quit
+}
+
+/// Key commands arrive from the JavaScript key worker as integers
+/// (0 none, 1 Enter, 2 `a`, 3 quit); the Erlang side always answers 0
+/// and keeps its own stdin quit listener.
+fn pending_command() -> WatchCommand {
+  case take_pending_key() {
+    1 -> ForceRerun
+    2 -> RunAll
+    3 -> Quit
+    _ -> NoCommand
   }
 }
 
@@ -87,15 +117,19 @@ fn print_status(code: Int, color: Bool, interactive: Bool) -> Nil {
     0 -> paint(color, green, "passing")
     _ -> paint(color, red, "failing (exit " <> int.to_string(code) <> ")")
   }
-  // The quit hint only holds for an interactive terminal, and the
-  // mechanism differs per target: the BEAM owns SIGINT (Ctrl+C opens its
-  // BREAK menu), so quitting there is a stdin listener; on JavaScript the
-  // blocked event loop rules a listener out, and the runtime's default
-  // SIGINT disposition quits.
+  // The hint only holds for an interactive terminal, and the mechanism
+  // differs per target: the BEAM owns SIGINT (Ctrl+C opens its BREAK
+  // menu), so quitting there is a stdin listener; on JavaScript a key
+  // worker listens for the Jest/Vitest-style keys, and when it could not
+  // be installed the runtime's default SIGINT disposition still quits.
   let quit_hint = case interactive, runner.target() {
     False, _ -> ""
     True, runner.Erlang -> " · q then Enter to quit"
-    True, runner.JavaScript -> " · Ctrl+C to quit"
+    True, runner.JavaScript ->
+      case keys_active() {
+        True -> " · Enter to rerun · a to run all · q to quit"
+        False -> " · Ctrl+C to quit"
+      }
   }
   io.println("")
   io.println(
@@ -204,6 +238,14 @@ fn sleep_ms(ms: Int) -> Nil
 @external(erlang, "vouch_ffi", "install_quit_hooks")
 @external(javascript, "../../vouch_ffi.mjs", "install_quit_hooks")
 fn install_quit_hooks() -> Nil
+
+@external(erlang, "vouch_ffi", "take_pending_key")
+@external(javascript, "../../vouch_ffi.mjs", "take_pending_key")
+fn take_pending_key() -> Int
+
+@external(erlang, "vouch_ffi", "keys_active")
+@external(javascript, "../../vouch_ffi.mjs", "keys_active")
+fn keys_active() -> Bool
 
 @external(erlang, "vouch_ffi", "ensure_unicode_stdio")
 @external(javascript, "../../vouch_ffi.mjs", "ensure_unicode_stdio")

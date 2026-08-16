@@ -5,6 +5,7 @@
 // what keeps non-test modules from ever being loaded.
 import { readFileSync, writeFileSync, statSync, readdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { Worker } from "node:worker_threads";
 import { Result$Ok, Result$Error, List$Empty, List$NonEmpty } from "./gleam.mjs";
 import {
   GleamPanic$GleamPanic,
@@ -146,31 +147,131 @@ function collectSnapshotRows(path, rows) {
 // on Windows this resolves gleam.exe via PATH but would miss a .cmd shim,
 // which gleam does not ship as.
 export function run_passthrough(command, args) {
-  const result = spawnSync(command, [...args], {
-    stdio: ["ignore", "inherit", "inherit"],
-  });
-  if (result.error) {
-    if (result.error.code === "ENOENT") return Result$Error(undefined);
-    throw result.error;
+  // Hand the console back for the duration of the run: raw mode off
+  // restores native Ctrl+C, which kills watcher and child together.
+  setRawMode(false);
+  try {
+    const result = spawnSync(command, [...args], {
+      stdio: ["ignore", "inherit", "inherit"],
+    });
+    if (result.error) {
+      if (result.error.code === "ENOENT") return Result$Error(undefined);
+      throw result.error;
+    }
+    // status is null when the child dies to a signal; the watcher is about
+    // to die to the same Ctrl+C, so the fallback is a formality.
+    return Result$Ok(result.status ?? 1);
+  } finally {
+    setRawMode(true);
   }
-  // status is null when the child dies to a signal; the watcher is about
-  // to die to the same Ctrl+C, so the fallback is a formality.
-  return Result$Ok(result.status ?? 1);
 }
 
 // Atomics.wait needs a SharedArrayBuffer view, allocated lazily so
-// ordinary test runs never touch SharedArrayBuffer.
+// ordinary test runs never touch SharedArrayBuffer. When the watch keys
+// are installed the wait moves to their shared buffer instead, so a
+// keypress can Atomics.notify the sleeping watcher awake immediately.
 let sleeper;
 
 export function sleep_ms(ms) {
+  if (watchShared !== null) {
+    Atomics.wait(watchShared, 0, 0, ms);
+    return;
+  }
   sleeper ??= new Int32Array(new SharedArrayBuffer(4));
   Atomics.wait(sleeper, 0, 0, ms);
 }
 
-// Nothing to install: the synchronous loop never returns to the event
-// loop, so a stdin listener could not fire. Quitting is Ctrl+C — unlike
-// the BEAM, the runtime dies to SIGINT by default, even while blocked.
-export function install_quit_hooks() {}
+// Interactive watch keys, following the Jest/Vitest vocabulary. The main
+// thread spends its whole life blocked (Atomics.wait between runs,
+// spawnSync during them), so it can never hear stdin events; a worker
+// thread does blocking reads of fd 0 instead and posts one command byte
+// into the buffer sleep_ms waits on. Raw mode is only enabled between
+// runs — during a run the console is back to normal, so Ctrl+C keeps its
+// native kill-everything behaviour; between runs the worker sees the raw
+// 0x03 byte itself and treats it as quit.
+//
+// Shared buffer slots: [0] the sleep/wake futex, [1] the pending command
+// (0 none, 1 Enter, 2 "a", 3 quit).
+let watchShared = null;
+
+const KEY_WORKER = `
+const { workerData } = require("node:worker_threads");
+const { readSync } = require("node:fs");
+const view = new Int32Array(workerData);
+const buf = Buffer.alloc(64);
+const backoff = new Int32Array(new SharedArrayBuffer(4));
+for (;;) {
+  let n = 0;
+  try {
+    n = readSync(0, buf, 0, buf.length);
+  } catch (error) {
+    // The tty stream on the main thread can flip fd 0 non-blocking on
+    // POSIX; back off briefly instead of spinning.
+    if (error.code === "EAGAIN") {
+      Atomics.wait(backoff, 0, 0, 25);
+      continue;
+    }
+    break;
+  }
+  if (n <= 0) break; // eof: stdin closed, retire like the Erlang listener
+  for (let i = 0; i < n; i++) {
+    const byte = buf[i];
+    let command = 0;
+    if (byte === 0x0d || byte === 0x0a) command = 1; // Enter
+    else if (byte === 0x61 || byte === 0x41) command = 2; // a
+    else if (byte === 0x71 || byte === 0x51 || byte === 0x03) command = 3; // q, Ctrl+C
+    if (command !== 0) {
+      // First unconsumed key wins, so a line-mode "a" + Enter reads as "a".
+      Atomics.compareExchange(view, 1, 0, command);
+      Atomics.notify(view, 0);
+    }
+  }
+}
+`;
+
+// Install the key worker. Needs a real console on stdin and a runtime
+// whose worker_threads can block on fd 0; anything short of that (Deno
+// gaps included) degrades to plain Ctrl+C — the loop itself never
+// depends on the keys, and keys_active reports what actually happened.
+export function install_quit_hooks() {
+  try {
+    if (typeof process === "undefined" || !process.stdin.isTTY) return;
+    const shared = new Int32Array(new SharedArrayBuffer(8));
+    const worker = new Worker(KEY_WORKER, {
+      eval: true,
+      workerData: shared.buffer,
+    });
+    worker.unref();
+    worker.on("error", () => {
+      setRawMode(false);
+      watchShared = null;
+    });
+    watchShared = shared;
+    setRawMode(true);
+  } catch {
+    watchShared = null;
+  }
+}
+
+function setRawMode(on) {
+  if (watchShared === null) return;
+  try {
+    process.stdin.setRawMode(on);
+  } catch {
+    // A console that refuses raw mode still delivers line-buffered keys.
+  }
+}
+
+// The pending command, consumed. 0 when no key (or no keys installed) —
+// the Erlang side always answers 0 and keeps its own stdin quit listener.
+export function take_pending_key() {
+  if (watchShared === null) return 0;
+  return Atomics.exchange(watchShared, 1, 0);
+}
+
+export function keys_active() {
+  return watchShared !== null;
+}
 
 // Node and Deno write UTF-8 to stdout/stderr regardless of redirection;
 // the latin1 hazard this guards against is BEAM-specific.

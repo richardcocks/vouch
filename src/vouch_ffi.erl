@@ -16,6 +16,8 @@
     run_passthrough/2,
     sleep_ms/1,
     install_quit_hooks/0,
+    take_pending_key/0,
+    keys_active/0,
     ensure_unicode_stdio/0,
     start_test/3,
     await_test/1,
@@ -351,6 +353,14 @@ ensure_unicode_stdio() ->
 install_quit_hooks() ->
     spawn(fun quit_listener/0),
     nil.
+
+%% The watch loop polls this for the JavaScript interactive keys
+%% (Enter / a / q). The BEAM has no key worker — its quit listener
+%% handles stdin — so there is never a pending key here.
+take_pending_key() -> 0.
+
+%% Unreachable: print_status only asks on the JavaScript target.
+keys_active() -> erlang:error(javascript_only).
 
 quit_listener() ->
     case io:get_line("") of

@@ -154,6 +154,19 @@ never fire, and unlike the BEAM the runtime's default SIGINT disposition
 terminates it even mid-block, so the mechanism the Erlang host fights is
 exactly the one the JavaScript host gets for free.
 
+The JavaScript host also carries the core Jest/Vitest watch keys (Enter
+to force a rerun, `a` to run all — distinct commands even while they
+coincide, so filtering can later hang off the difference — `q` to quit).
+The blocked main thread still can't hear stdin, so a worker thread does
+the blocking fd-0 reads and posts one command byte into the same shared
+buffer the poll sleep waits on; `Atomics.notify` wakes the watcher
+instantly. Raw mode (single keypress, no Enter) is only engaged between
+runs — during a run the console reverts, keeping native Ctrl+C's
+kill-the-run-too behaviour; between runs the worker sees the raw 0x03
+byte and treats it as quit. Anything that blocks installation (stdin not
+a console, worker gaps in a runtime) degrades back to Ctrl+C-only, and
+the status line reports whichever mode actually engaged.
+
 == TeamCity service messages (shipped post-v1)
 
 `--format=teamcity`, detailed in @sec-output. The event stream was already
