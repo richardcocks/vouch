@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.2.0
 
 Watch mode now runs on the JavaScript target (Node and Deno), so
 `gleam run --target javascript -m vouch -- watch` works without the BEAM
@@ -17,6 +17,9 @@ On the JavaScript host, watch mode now has the core Jest/Vitest keys:
 Enter forces a rerun, `a` runs the whole suite, `q` (or Ctrl+C) quits —
 single keypress, no Enter needed. When stdin is not an interactive
 console the keys degrade away and Ctrl+C still quits.
+
+Watch mode no longer crashes when stdout is not a TTY, so it can run
+under editors and CI log capture.
 
 ## v1.1.0
 
