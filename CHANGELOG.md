@@ -1,22 +1,22 @@
 # Changelog
 
-## Unreleased
+## v1.2.0
 
-Watch mode now runs on the JavaScript target (Node and Deno), so
-`gleam run --target javascript -m vouch -- watch` works without the BEAM
-installed. Quitting is Ctrl+C on JavaScript (q then Enter on Erlang stays
-as it was). Deno projects using watch mode need `allow_run = ["gleam"]` in
-their `gleam.toml`.
+Watch mode added for the JavaScript target, supporting both Node and Deno
 
-The inner test runs now follow the watcher's own target by default;
-pass `--target=erlang|javascript` after the `--` to run them on a
-different target than the watcher. Both `--target=x` and `--target x`
-spellings are accepted, matching gleam's own flag.
+The syntax for this is slightly awkward:
+`gleam run --target javascript -m vouch -- watch` noting that
+the `--target` has to come before the `--` not after!
 
-On the JavaScript host, watch mode now has the core Jest/Vitest keys:
-Enter forces a rerun, `a` runs the whole suite, `q` (or Ctrl+C) quits —
-single keypress, no Enter needed. When stdin is not an interactive
-console the keys degrade away and Ctrl+C still quits.
+This controls the target of the parent watcher, and defaults the 
+inner runtime to that too. You can have the runtime of
+the inner tests be different by specifying `--target=erlang` after 
+the `--`.
+
+On the javascript runner, you can re-run all manually with `a` and 
+quitting will happen on `q`. On the erlang runner you have to press `q` 
+and then hit `<enter>` sorry, I can't figure out how to get more responsive 
+console in erlang. PRs welcome!
 
 ## v1.1.0
 
