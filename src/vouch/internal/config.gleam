@@ -34,10 +34,6 @@ pub type Config {
     timeout_ms: Int,
     color: ColorChoice,
     parallel: Parallelism,
-    /// Reprint the BEAM crash reports captured during the run (processes
-    /// the tests spawned dying) after the summary. Off by default: a death
-    /// under a test already shows in the test's outcome.
-    show_crash_reports: Bool,
   )
 }
 
@@ -53,7 +49,6 @@ pub fn from_args(args: List(String)) -> Result(Config, String) {
       timeout_ms: default_timeout_ms,
       color: Auto,
       parallel: Sequential,
-      show_crash_reports: False,
     ),
   )
 }
@@ -95,8 +90,6 @@ fn parse(args: List(String), config: Config) -> Result(Config, String) {
             "--parallel expects a worker count of at least 1, got: " <> value,
           ))
       }
-    ["--show-crash-reports", ..rest] ->
-      parse(rest, Config(..config, show_crash_reports: True))
     [arg, ..] ->
       case string.starts_with(arg, "-") {
         True -> Error(usage("unknown option: " <> arg))
@@ -138,9 +131,6 @@ fn usage(problem: String) -> String {
   <> "  --timeout=ms    per-test timeout on the Erlang target (default 5000)\n"
   <> "  --parallel[=n]  run tests concurrently on the Erlang target with n\n"
   <> "                  workers (default: one per scheduler)\n"
-  <> "  --show-crash-reports\n"
-  <> "                  print the BEAM crash reports of processes that died\n"
-  <> "                  during the run after the summary (Erlang target)\n"
   <> "  --color=mode    console colour: auto (default), always, never;\n"
   <> "                  auto respects NO_COLOR and non-TTY output\n"
   <> "\n"

@@ -8,7 +8,6 @@ import { spawnSync } from "node:child_process";
 import { Worker } from "node:worker_threads";
 import { isatty } from "node:tty";
 import { Result$Ok, Result$Error, List$Empty, List$NonEmpty } from "./gleam.mjs";
-import { Option$None } from "../gleam_stdlib/gleam/option.mjs";
 import {
   GleamPanic$GleamPanic,
   PanicKind$Todo,
@@ -75,19 +74,8 @@ function erlangOnly(name) {
   throw new Error(`vouch: ${name} is only available on the Erlang target`);
 }
 
-export function capture_diagnostics() {
-  erlangOnly("capture_diagnostics");
-}
-
-// The run loop drains on every target when --show-crash-reports is given;
-// JavaScript has no logger capture, so there is never anything to hand
-// back (the flag is warned about as ineffective).
-export function drain_diagnostics() {
-  return List$Empty();
-}
-
-export function take_diagnostics_matching(_marker) {
-  erlangOnly("take_diagnostics_matching");
+export function redirect_diagnostics_to_stderr() {
+  erlangOnly("redirect_diagnostics_to_stderr");
 }
 
 export function find_test_files() {
@@ -375,13 +363,6 @@ export function catch_panic(f) {
   } catch (error) {
     return Result$Error(error);
   }
-}
-
-// The Erlang side splits {Reason, Stacktrace} into the reason and a crash
-// site taken from the top frame. A JavaScript throw only carries an unparsed
-// stack string, so there is never a site here and the term passes through.
-export function split_crash(raw) {
-  return [raw, Option$None()];
 }
 
 // Decode a thrown value into vouch's GleamPanic type, or error for anything

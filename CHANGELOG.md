@@ -1,11 +1,5 @@
 # Changelog
 
-## Unreleased
-
-To keep the output of vouch clean, vouch now catches and suppresses any errors coming out of dying OTP processes.
-If you need to inspect these crash reports, there is now the option `--show-crash-reports`.
-These will be printed to stderr after the summary.
-
 ## v1.2.0
 
 Watch mode added for the JavaScript target, supporting both Node and Deno
