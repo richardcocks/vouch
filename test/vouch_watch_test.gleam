@@ -3,18 +3,24 @@
 //// it is exercised manually against examples/playground rather than here.
 //// Manual checks, run from examples/playground:
 ////   - `gleam run -m vouch -- watch`: cycles on file changes; q + Enter
-////     quits; the status line shows the quit hint.
+////     quits; the status line shows the key hint. `j` + Enter reruns on
+////     JavaScript (the banner shows the target), `k` + Enter switches
+////     back to Erlang, `l` + Enter while already on Erlang is a plain
+////     rerun.
 ////   - `gleam run -m vouch -- watch > log.txt`: must keep cycling rather
 ////     than crash (a non-console stdin kills the BEAM io server if the
 ////     quit listener reads it), log.txt gets UTF-8 with no ANSI codes,
-////     and the status line omits the quit hint.
+////     and the status line omits the key hint.
 ////   - `gleam run --target javascript -m vouch -- watch`: same cycling on
 ////     the Node host with JavaScript inner runs (they follow the
 ////     watcher's target). Enter forces a rerun, `a` runs the whole
-////     suite, `q` or Ctrl+C quits — single keypress, no Enter — and the
-////     status line lists the keys. Ctrl+C mid-run still kills the run.
-////     With stdin redirected the keys degrade away and the status line
-////     falls back to "Ctrl+C to quit".
+////     suite, `l` reruns on Erlang, `j` on JavaScript, `k` switches,
+////     `q` or Ctrl+C quits — single keypress, no Enter — and the status
+////     line lists the keys. Ctrl+C mid-run still kills the run. With
+////     stdin redirected the keys degrade away and the status line falls
+////     back to "Ctrl+C to quit".
+////   - `gleam run -m vouch -- watch --target=javascript`: starts on
+////     JavaScript; `k` + Enter flips to Erlang.
 
 import gleam/list
 import vouch/internal/runner
@@ -114,6 +120,47 @@ pub fn inner_args_rejects_unknown_flag_test() {
   // Validated once at startup with the inner run's own parser, so a typo
   // fails loudly instead of on every cycle.
   let assert Error(_) = watch.inner_args(["--wibble"], False, runner.Erlang)
+}
+
+pub fn toggle_target_test() {
+  assert watch.toggle_target("erlang") == "javascript"
+  assert watch.toggle_target("javascript") == "erlang"
+}
+
+pub fn parse_watch_args_splits_target_from_flags_test() {
+  // The loop keeps the target and flags apart so the keys can swap the
+  // target between cycles; build_inner reassembles what inner_args gives.
+  assert watch.parse_watch_args(
+      ["--target", "javascript", "--filter=x"],
+      True,
+      runner.Erlang,
+    )
+    == Ok(#("javascript", ["--filter=x", "--color=always"]))
+  assert watch.parse_watch_args([], False, runner.JavaScript)
+    == Ok(#("javascript", []))
+}
+
+pub fn build_inner_matches_inner_args_test() {
+  let args = ["--target=javascript", "--filter=x"]
+  let assert Ok(#(target, flags)) =
+    watch.parse_watch_args(args, True, runner.Erlang)
+  assert Ok(watch.build_inner(target, flags))
+    == watch.inner_args(args, True, runner.Erlang)
+}
+
+pub fn switching_target_keeps_flags_test() {
+  // A target key changes only the build tool's side of the `--`.
+  let assert Ok(#(target, flags)) =
+    watch.parse_watch_args(["--filter=slow"], True, runner.Erlang)
+  assert watch.build_inner(watch.toggle_target(target), flags)
+    == [
+      "test",
+      "--target",
+      "javascript",
+      "--",
+      "--filter=slow",
+      "--color=always",
+    ]
 }
 
 pub fn snapshot_walks_directories_test() {

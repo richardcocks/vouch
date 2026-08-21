@@ -67,15 +67,22 @@ without the BEAM installed. To run the watcher and the tests on different target
 `--target=erlang|javascript` after the `--`; it applies to the inner runs:
 `gleam run -m vouch -- watch --target=javascript` supervises JavaScript tests from the BEAM.
 
-Keys depend on the host target:
+The inner target can also be changed while watching: `j` reruns on JavaScript, `l` on Erlang,
+and `k` switches between the two. The banner shows which target each run used. How the keys
+are read depends on the host target:
 
-- **Erlang**: press `q` then Enter to quit. It's a bit awkward, but Ctrl+C is captured by the
-  BEAM and I couldn't get it to work properly and I don't have enough environments to test the
-  specifics for trying to overcome that issue.
+- **Erlang**: press the key then Enter — `q` + Enter quits, `j`/`l`/`k` + Enter pick the
+  target. It's a bit awkward, but Ctrl+C is captured by the BEAM and I couldn't get it to work
+  properly and I don't have enough environments to test the specifics for trying to overcome
+  that issue.
 - **JavaScript**: the usual Jest/Vitest watch keys, single keypress, no Enter needed —
   `Enter` forces a rerun, `a` runs the whole suite (the same thing until test filtering
-  exists), and `q` or Ctrl+C quits. If the keys can't be installed (stdin isn't a console),
-  Ctrl+C still quits.
+  exists), `j`/`l`/`k` pick the target, and `q` or Ctrl+C quits. If the keys can't be
+  installed (stdin isn't a console), Ctrl+C still quits and the target is fixed.
+
+Switching to Erlang from a Node/Deno-hosted watcher needs the BEAM installed; without it the
+cycle fails with the build tool's own error and `j` or `k` switches back. Tests gated by
+`@target` come and go with the target, so the count changing between cycles is expected.
 
 On Deno, watch mode also needs `allow_run = ["gleam"]` to spawn the inner runs (see
 "Target differences" below).

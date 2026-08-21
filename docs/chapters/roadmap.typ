@@ -171,6 +171,16 @@ byte, hands the terminal back, and treats it as quit. Anything that blocks insta
 a console, worker gaps in a runtime) degrades back to Ctrl+C-only, and
 the status line reports whichever mode actually engaged.
 
+Three vouch-specific keys sit alongside the Jest/Vitest set: `j` reruns
+on JavaScript, `l` on Erlang, `k` switches between them (none clash with
+the Jest/Vitest vocabulary). This is cheap because the watcher always
+passes `--target` to the inner run explicitly and reads nothing
+target-specific back, so the target is simply loop state rebuilt into the
+argument list each cycle. The Erlang host gained a real key channel for
+it: the line-based quit listener posts the target keys to the watch
+process as messages, which the same poll that serves the JavaScript key
+worker drains — so on the BEAM they are key + Enter, like `q`.
+
 == TeamCity service messages (shipped post-v1)
 
 `--format=teamcity`, detailed in @sec-output. The event stream was already

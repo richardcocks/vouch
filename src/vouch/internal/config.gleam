@@ -162,5 +162,6 @@ fn usage(problem: String) -> String {
   <> "Watch mode (rerun on file change):\n"
   <> "  gleam run -m vouch -- watch [options] [--target=erlang|javascript]\n"
   <> "                  the inner runs follow the watcher's target unless\n"
-  <> "                  --target says otherwise"
+  <> "                  --target says otherwise; while watching, j / l / k\n"
+  <> "                  switch the inner target (javascript / erlang / other)"
 }

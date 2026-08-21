@@ -238,7 +238,8 @@ export function sleep_ms(ms) {
 // terminal, and treats it as quit.
 //
 // Shared buffer slots: [0] the sleep/wake futex, [1] the pending command
-// (0 none, 1 Enter, 2 "a", 3 quit).
+// (0 none, 1 Enter, 2 "a", 3 quit, 4 "j" javascript, 5 "l" erlang,
+// 6 "k" switch target).
 let watchShared = null;
 let watchWorker = null;
 
@@ -255,6 +256,9 @@ stream.on("data", (buf) => {
     if (byte === 0x0d || byte === 0x0a) command = 1; // Enter
     else if (byte === 0x61 || byte === 0x41) command = 2; // a
     else if (byte === 0x71 || byte === 0x51 || byte === 0x03) command = 3; // q, Ctrl+C
+    else if (byte === 0x6a || byte === 0x4a) command = 4; // j: javascript
+    else if (byte === 0x6c || byte === 0x4c) command = 5; // l: erlang
+    else if (byte === 0x6b || byte === 0x4b) command = 6; // k: switch target
     if (command !== 0) {
       if (command === 3) {
         // The main thread exits on the spot when it wakes; hand the
@@ -308,7 +312,7 @@ function setRawMode(on) {
 }
 
 // The pending command, consumed. 0 when no key (or no keys installed) —
-// the Erlang side always answers 0 and keeps its own stdin quit listener.
+// the Erlang side answers from its line-based stdin listener instead.
 export function take_pending_key() {
   if (watchShared === null) return 0;
   return Atomics.exchange(watchShared, 1, 0);
