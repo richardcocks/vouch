@@ -137,7 +137,31 @@ pub fn linked_crash_is_contained_test() {
   let assert outcome.Failed(outcome.PanicDetail(p)) =
     outcome.classify("vouch_test", "linked_crash_is_contained_test", invocation)
   assert p.message == "crash in linked process"
+  // The linked process's death also reaches the emulator, which logs an
+  // "Error in process" report asynchronously. It must land in the capture
+  // buffer rather than interleaving with test output; consuming it here
+  // also keeps it out of this suite's own end-of-run diagnostics block.
+  let assert [report, ..] = await_diagnostics("crash in linked process", 40)
+  assert string.contains(report, "Error in process")
 }
+
+@target(erlang)
+/// Captured diagnostics matching `marker`, polling while an emulator
+/// report may still be in flight. Taking only the matching reports leaves
+/// any other test's diagnostics alone, so this cannot race a parallel run.
+fn await_diagnostics(marker: String, retries: Int) -> List(String) {
+  case runner.take_diagnostics_matching(marker) {
+    [] if retries > 0 -> {
+      sleep_ms(25)
+      await_diagnostics(marker, retries - 1)
+    }
+    reports -> reports
+  }
+}
+
+@target(erlang)
+@external(erlang, "timer", "sleep")
+fn sleep_ms(ms: Int) -> Nil
 
 @target(erlang)
 /// A todo inside an OTP process (here a real gen_server callback) reaches
@@ -153,6 +177,11 @@ pub fn otp_wrapped_todo_is_todo_outcome_test() {
     )
   assert p.module == "helpers"
   assert p.function == "unimplemented"
+  // gen_server logs its terminating report (and proc_lib its crash report)
+  // on the way down; both must be captured, not printed mid-run. Consumed
+  // here so the suite's own end-of-run diagnostics block stays empty.
+  let reports = await_diagnostics("vouch_otp_fixture", 40)
+  assert reports != []
 }
 
 @target(erlang)

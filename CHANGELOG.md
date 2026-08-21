@@ -17,6 +17,13 @@ structured `site_module` / `site_function` / `site_arity` (plus
 unchanged: a JS stacktrace is an unparsed string, so there is no site to
 extract.
 
+On the Erlang target, BEAM diagnostics (crash reports from processes the
+tests spawned, and anything else routed through OTP's logger) are now
+captured during the run and reprinted as a single block on stderr after
+the summary, instead of interleaving with test output mid-run. This also
+stops reports being lost entirely when the VM halted before an
+asynchronous report arrived.
+
 ## v1.2.0
 
 Watch mode added for the JavaScript target, supporting both Node and Deno

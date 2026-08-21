@@ -9,7 +9,10 @@
     now_microseconds/0,
     is_stdout_tty/0,
     env/1,
-    redirect_diagnostics_to_stderr/0,
+    capture_diagnostics/0,
+    drain_diagnostics/0,
+    take_diagnostics_matching/1,
+    log/2,
     write_file/2,
     read_source/3,
     halt/1,
@@ -72,14 +75,113 @@ env(Name) ->
         Value -> {ok, unicode:characters_to_binary(Value)}
     end.
 
-%% Route BEAM diagnostics (e.g. crash reports from processes that tests
-%% spawned) to stderr, so stdout stays a clean stream for reporters. They
-%% remain visible in a terminal; they no longer corrupt piped output.
+%% Capture BEAM diagnostics (crash reports from processes that tests
+%% spawned, anything else routed through OTP's logger) instead of letting
+%% the default handler interleave them with test output. This module
+%% doubles as the logger handler: log/2 renders each event with the
+%% formatter the default handler would have used and stashes the text in a
+%% public ETS table, which the runner drains and reprints once the run is
+%% over. Compared to the previous stderr redirect this also stops reports
+%% being lost outright when the VM halts before an asynchronous report
+%% lands. If the capture handler cannot be installed, fall back to that
+%% redirect: reports on stderr beat reports corrupting a machine-read
+%% stdout stream.
+capture_diagnostics() ->
+    catch case logger:get_handler_config(vouch_diagnostics) of
+        {ok, _} ->
+            %% Already capturing; installing twice would double reports.
+            ok;
+        _ ->
+            case logger:get_handler_config(default) of
+                {ok, #{filters := Filters, formatter := Formatter}} ->
+                    ensure_diagnostics_table(),
+                    %% Added before the default handler is removed, so no
+                    %% window exists where an event is dropped entirely.
+                    case logger:add_handler(vouch_diagnostics, ?MODULE,
+                            #{filters => Filters, formatter => Formatter}) of
+                        ok -> logger:remove_handler(default);
+                        _ -> redirect_default_to_stderr()
+                    end;
+                _ ->
+                    %% No default handler: nothing would have printed, so
+                    %% there is nothing to capture.
+                    ok
+            end
+    end,
+    nil.
+
+ensure_diagnostics_table() ->
+    case ets:whereis(vouch_diagnostics) of
+        undefined ->
+            %% Owned by the runner process, which lives until halt.
+            ets:new(vouch_diagnostics, [named_table, public, ordered_set]);
+        _ ->
+            ok
+    end.
+
+%% Logger handler callback, installed by capture_diagnostics/0. Runs in the
+%% logging process for logger API calls and in the logger server for
+%% emulator-generated reports; either way, render now and append. Must
+%% never raise: logger removes a handler whose callback crashes.
+log(Event, Config) ->
+    catch ets:insert(vouch_diagnostics,
+        {erlang:unique_integer([monotonic]), render_diagnostic(Event, Config)}),
+    ok.
+
+render_diagnostic(Event, Config) ->
+    try
+        {FModule, FConfig} = maps:get(formatter, Config),
+        Text = unicode:characters_to_binary(FModule:format(Event, FConfig)),
+        true = is_binary(Text),
+        Text
+    catch
+        _:_ ->
+            unicode:characters_to_binary(io_lib:format("~0tp~n", [Event]))
+    end.
+
+%% All captured diagnostics in arrival order, removed from the table. Only
+%% the returned rows are deleted, so an event arriving mid-drain is kept
+%% for a later drain rather than silently discarded.
+drain_diagnostics() ->
+    logger_sync(),
+    take_diagnostics(fun(_Text) -> true end).
+
+%% Remove and return only the captured diagnostics whose text contains
+%% Marker, leaving the rest alone. The suite-facing probe: a spec that
+%% deliberately crashes a process can assert its report was captured
+%% without stealing reports that belong to other tests.
+take_diagnostics_matching(Marker) ->
+    logger_sync(),
+    take_diagnostics(fun(Text) ->
+        binary:match(Text, Marker) =/= nomatch
+    end).
+
+take_diagnostics(Keep) ->
+    case catch ets:tab2list(vouch_diagnostics) of
+        Rows when is_list(Rows) ->
+            [begin
+                 catch ets:delete(vouch_diagnostics, Key),
+                 Text
+             end || {Key, Text} <- Rows, Keep(Text)];
+        _ ->
+            []
+    end.
+
+%% Emulator-generated reports travel through the logger server's mailbox
+%% (API-call events are handled in the logging process itself, before the
+%% crash propagates). A synchronous round-trip means everything already
+%% sent to the server is in the table before it is read; reports generated
+%% after the final drain are still lost at halt, as before.
+logger_sync() ->
+    catch sys:get_state(logger, 1000),
+    ok.
+
+%% Fallback when the capture handler cannot be installed: route the default
+%% handler to stderr, so stdout stays a clean stream for reporters.
 %% logger_std_h does not honour a runtime `type` change, so the handler is
-%% removed and re-added with its filters and formatter preserved. Note the
-%% reports are asynchronous and can be lost entirely if the VM halts first.
-redirect_diagnostics_to_stderr() ->
-    catch case logger:get_handler_config(default) of
+%% removed and re-added with its filters and formatter preserved.
+redirect_default_to_stderr() ->
+    case logger:get_handler_config(default) of
         {ok, #{module := Module, config := HConfig} = Cfg} ->
             NewCfg0 = Cfg#{config := HConfig#{type => standard_error}},
             NewCfg = maps:remove(id, maps:remove(module, NewCfg0)),
@@ -96,8 +198,7 @@ redirect_diagnostics_to_stderr() ->
             end;
         _ ->
             ok
-    end,
-    nil.
+    end.
 
 %% Paths of .gleam files under test/, relative to test/.
 find_test_files() ->

@@ -75,8 +75,18 @@ function erlangOnly(name) {
   throw new Error(`vouch: ${name} is only available on the Erlang target`);
 }
 
-export function redirect_diagnostics_to_stderr() {
-  erlangOnly("redirect_diagnostics_to_stderr");
+export function capture_diagnostics() {
+  erlangOnly("capture_diagnostics");
+}
+
+// The run loop drains diagnostics on every target; JavaScript has no
+// logger capture, so there is never anything to hand back.
+export function drain_diagnostics() {
+  return List$Empty();
+}
+
+export function take_diagnostics_matching(_marker) {
+  return List$Empty();
 }
 
 export function find_test_files() {
