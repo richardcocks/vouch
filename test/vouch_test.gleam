@@ -137,7 +137,30 @@ pub fn linked_crash_is_contained_test() {
   let assert outcome.Failed(outcome.PanicDetail(p)) =
     outcome.classify("vouch_test", "linked_crash_is_contained_test", invocation)
   assert p.message == "crash in linked process"
+  // The linked process's death also reaches the emulator, which logs an
+  // "Error in process" report asynchronously. It must land in the capture
+  // buffer, never on stderr.
+  let assert [report, ..] = await_diagnostics("crash in linked process", 40)
+  assert string.contains(report, "Error in process")
 }
+
+@target(erlang)
+/// Captured diagnostics matching `marker`, polling while an emulator
+/// report may still be in flight. Taking only the matching reports leaves
+/// any other test's diagnostics alone, so this cannot race a parallel run.
+fn await_diagnostics(marker: String, retries: Int) -> List(String) {
+  case runner.take_diagnostics_matching(marker) {
+    [] if retries > 0 -> {
+      sleep_ms(25)
+      await_diagnostics(marker, retries - 1)
+    }
+    reports -> reports
+  }
+}
+
+@target(erlang)
+@external(erlang, "timer", "sleep")
+fn sleep_ms(ms: Int) -> Nil
 
 @target(erlang)
 /// A todo inside an OTP process (here a real gen_server callback) reaches
@@ -153,6 +176,10 @@ pub fn otp_wrapped_todo_is_todo_outcome_test() {
     )
   assert p.module == "helpers"
   assert p.function == "unimplemented"
+  // gen_server logs its terminating report (and proc_lib its crash report)
+  // on the way down; both must be captured, never printed.
+  let reports = await_diagnostics("vouch_otp_fixture", 40)
+  assert reports != []
 }
 
 @target(erlang)
@@ -202,6 +229,108 @@ pub fn parallel_test_times_out_test() {
 @target(erlang)
 @external(erlang, "vouch_ffi", "now_microseconds")
 fn monotonic_microseconds() -> Int
+
+// --- Crash sites ---
+//
+// A crash that is not a Gleam panic (the motivating case: a stale .beam
+// shadowing a dependency, so every call into it is undef) has no payload to
+// decode. The stacktrace's top frame is the only thing that names what
+// failed, so classification must carry it into the failure detail.
+
+@target(erlang)
+pub fn undef_crash_carries_call_site_test() {
+  let invocation =
+    outcome.from_caught(runner.catch_panic(helpers.calls_missing_function))
+  let assert outcome.Failed(outcome.UnknownDetail(reason, Some(site))) =
+    outcome.classify(
+      "vouch_test",
+      "undef_crash_carries_call_site_test",
+      invocation,
+    )
+  // The reason alone: inspecting it must never dump the stacktrace.
+  assert string.inspect(reason) == "Undef"
+  // An undef frame carries the argument list (arity 0 here) and no
+  // file/line: the called function does not exist anywhere.
+  assert site
+    == outcome.CrashSite(
+      module: "vouch_no_such_module",
+      function: "boom",
+      arity: 0,
+      location: None,
+    )
+}
+
+@target(erlang)
+/// A linked process crashing with a non-Gleam error kills the test process;
+/// the exit reason still carries the stacktrace, so the death report names
+/// the call site rather than dumping raw frames.
+pub fn linked_undef_crash_names_call_site_test() {
+  let invocation =
+    runner.run_in_process("helpers", "crashes_linked_undef", 5000)
+  let assert outcome.Failed(outcome.ExitDetail(reason, Some(site))) =
+    outcome.classify(
+      "vouch_test",
+      "linked_undef_crash_names_call_site_test",
+      invocation,
+    )
+  assert string.inspect(reason) == "Undef"
+  assert site.module == "vouch_no_such_module"
+  assert site.function == "boom"
+  assert site.arity == 0
+  // The linked process's undef also produces an emulator report; assert it
+  // was captured rather than printed.
+  let assert [_, ..] = await_diagnostics("vouch_no_such_module", 40)
+}
+
+@target(erlang)
+/// End to end: the report line a stale .beam produces. "Crashed: Undef"
+/// alone is information-free; the call site is the answer.
+pub fn describe_undef_crash_test() {
+  let invocation =
+    outcome.from_caught(runner.catch_panic(helpers.calls_missing_function))
+  let assert outcome.Failed(detail) =
+    outcome.classify("vouch_test", "describe_undef_crash_test", invocation)
+  assert describe.failure(detail)
+    == ["Crashed: Undef calling vouch_no_such_module:boom/0"]
+}
+
+/// A frame that carries a file and line gets an `at` line, in the same
+/// clickable file:line shape as panic locations.
+pub fn describe_crash_site_location_test() {
+  let site =
+    outcome.CrashSite(
+      module: "filepath",
+      function: "split",
+      arity: 1,
+      location: Some(#("src/filepath.erl", 145)),
+    )
+  assert describe.failure(outcome.UnknownDetail(
+      dynamic.string("boom"),
+      Some(site),
+    ))
+    == [
+      "Crashed: \"boom\" calling filepath:split/1",
+      "  at src/filepath.erl:145",
+    ]
+}
+
+/// No recognisable stacktrace — every JavaScript crash, exotic BEAM exit
+/// reasons — falls back to the reason alone, exactly as before.
+pub fn describe_crash_without_site_test() {
+  assert describe.failure(outcome.UnknownDetail(dynamic.string("boom"), None))
+    == ["Crashed: \"boom\""]
+  assert describe.failure(outcome.ExitDetail(dynamic.string("kill"), None))
+    == ["Test process died: \"kill\""]
+}
+
+/// A death with a known site reads like a crash: the reason, then what was
+/// being called.
+pub fn describe_exit_with_site_test() {
+  let site =
+    outcome.CrashSite(module: "m", function: "f", arity: 2, location: None)
+  assert describe.failure(outcome.ExitDetail(dynamic.string("boom"), Some(site)))
+    == ["Test process died: \"boom\" calling m:f/2"]
+}
 
 // --- Tally and exit codes ---
 
@@ -467,6 +596,7 @@ pub fn config_defaults_test() {
       timeout_ms: config.default_timeout_ms,
       color: config.Auto,
       parallel: config.Sequential,
+      show_crash_reports: False,
     ))
 }
 
@@ -479,6 +609,7 @@ pub fn config_format_and_filter_test() {
       timeout_ms: config.default_timeout_ms,
       color: config.Auto,
       parallel: config.Sequential,
+      show_crash_reports: False,
     ))
   assert config.from_args([
       "--filter=decode",
@@ -492,6 +623,7 @@ pub fn config_format_and_filter_test() {
       timeout_ms: 250,
       color: config.Auto,
       parallel: config.Sequential,
+      show_crash_reports: False,
     ))
 }
 
@@ -517,6 +649,13 @@ pub fn config_parallel_test() {
     config.from_args(["--parallel=4"])
   let assert Error(_) = config.from_args(["--parallel=0"])
   let assert Error(_) = config.from_args(["--parallel=lots"])
+}
+
+pub fn config_show_crash_reports_test() {
+  let assert Ok(config.Config(show_crash_reports: True, ..)) =
+    config.from_args(["--show-crash-reports"])
+  // A flag, not an option: a value is an error like any unknown flag.
+  let assert Error(_) = config.from_args(["--show-crash-reports=yes"])
 }
 
 pub fn config_color_test() {
@@ -792,4 +931,68 @@ pub fn jsonl_todo_result_test() {
     <> "\"outcome\":\"todo\",\"duration_us\":10,\"message\":\"m\","
     <> "\"site_module\":\"some_module\",\"site_function\":\"some_function\","
     <> "\"site_line\":1}"
+}
+
+/// A crash site reaches JSON consumers as structured fields, following the
+/// site_* naming the todo outcome already uses. File and line appear only
+/// when the frame carried them.
+pub fn jsonl_crash_site_test() {
+  let site =
+    outcome.CrashSite(
+      module: "filepath",
+      function: "split",
+      arity: 1,
+      location: Some(#("src/filepath.erl", 145)),
+    )
+  let out =
+    outcome.Failed(outcome.UnknownDetail(dynamic.string("boom"), Some(site)))
+  assert jsonl.event_to_json(event.TestResult("m", "f", out, 10))
+    == "{\"event\":\"test_result\",\"module\":\"m\",\"function\":\"f\","
+    <> "\"outcome\":\"fail\",\"duration_us\":10,\"kind\":\"unknown\","
+    <> "\"message\":\"\\\"boom\\\"\",\"site_module\":\"filepath\","
+    <> "\"site_function\":\"split\",\"site_arity\":1,"
+    <> "\"site_file\":\"src/filepath.erl\",\"site_line\":145}"
+}
+
+/// The TeamCity and JUnit failure messages carry the same call site as the
+/// console wording.
+pub fn teamcity_crash_site_test() {
+  let site =
+    outcome.CrashSite(
+      module: "filepath",
+      function: "split",
+      arity: 1,
+      location: None,
+    )
+  let #(_, lines) =
+    teamcity.step(
+      None,
+      event.TestResult(
+        "m_test",
+        "x_test",
+        outcome.Failed(outcome.UnknownDetail(dynamic.string("boom"), Some(site))),
+        0,
+      ),
+    )
+  assert string.contains(string.join(lines, "\n"), "calling filepath:split/1")
+}
+
+pub fn junit_crash_site_test() {
+  let site =
+    outcome.CrashSite(
+      module: "filepath",
+      function: "split",
+      arity: 1,
+      location: None,
+    )
+  let results = [
+    #(
+      "m_test",
+      "x_test",
+      outcome.Failed(outcome.UnknownDetail(dynamic.string("boom"), Some(site))),
+      0,
+    ),
+  ]
+  let xml = junit.render(results, 0)
+  assert string.contains(xml, "calling filepath:split/1")
 }

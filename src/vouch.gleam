@@ -54,6 +54,7 @@ fn run_tests(args: List(String)) -> Nil {
             cfg.filter,
             cfg.timeout_ms,
             cfg.parallel,
+            cfg.show_crash_reports,
           )
         config.Console, Some(path) ->
           runner.run(
@@ -64,15 +65,23 @@ fn run_tests(args: List(String)) -> Nil {
             cfg.filter,
             cfg.timeout_ms,
             cfg.parallel,
+            cfg.show_crash_reports,
           )
         config.Json, None ->
-          runner.run(jsonl.reporter(), cfg.filter, cfg.timeout_ms, cfg.parallel)
+          runner.run(
+            jsonl.reporter(),
+            cfg.filter,
+            cfg.timeout_ms,
+            cfg.parallel,
+            cfg.show_crash_reports,
+          )
         config.Json, Some(path) ->
           runner.run(
             reporter.pair(jsonl.reporter(), junit.reporter(path)),
             cfg.filter,
             cfg.timeout_ms,
             cfg.parallel,
+            cfg.show_crash_reports,
           )
         config.TeamCity, None ->
           runner.run(
@@ -80,6 +89,7 @@ fn run_tests(args: List(String)) -> Nil {
             cfg.filter,
             cfg.timeout_ms,
             cfg.parallel,
+            cfg.show_crash_reports,
           )
         config.TeamCity, Some(path) ->
           runner.run(
@@ -87,6 +97,7 @@ fn run_tests(args: List(String)) -> Nil {
             cfg.filter,
             cfg.timeout_ms,
             cfg.parallel,
+            cfg.show_crash_reports,
           )
       }
     }
