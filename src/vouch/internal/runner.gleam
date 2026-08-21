@@ -2,8 +2,6 @@
 //// per-target loops live here with the narrow FFI contract at the bottom.
 
 import gleam/dynamic.{type Dynamic}
-import gleam/int
-import gleam/io
 import gleam/list
 import gleam/option.{type Option}
 import gleam/order
@@ -63,38 +61,10 @@ fn finish(
   state: s,
   outcomes: List(TestOutcome),
   duration: Int,
-  show_crash_reports: Bool,
 ) -> Nil {
   let t = tally(outcomes)
   let _ = rep.handle(state, event.RunEnd(t, duration))
-  case show_crash_reports {
-    True -> print_crash_reports(drain_diagnostics())
-    False -> Nil
-  }
   halt(exit_code(t))
-}
-
-/// `--show-crash-reports`: the BEAM diagnostics captured during the run
-/// (crash reports from processes the tests spawned, logger output),
-/// reprinted as one block after the summary on stderr — visible in a
-/// terminal, clear of a machine-read stdout stream (JSONL, TeamCity).
-fn print_crash_reports(reports: List(String)) -> Nil {
-  case reports {
-    [] -> Nil
-    _ -> {
-      let noun = case reports {
-        [_] -> "crash report"
-        _ -> "crash reports"
-      }
-      term.warn(
-        int.to_string(list.length(reports))
-        <> " "
-        <> noun
-        <> " captured during the run:",
-      )
-      list.each(reports, io.print_error)
-    }
-  }
 }
 
 /// Call a function, capturing any panic as the raw target-specific value.
@@ -142,11 +112,10 @@ pub fn run(
   filter: Option(String),
   timeout_ms: Int,
   parallel: config.Parallelism,
-  show_crash_reports: Bool,
 ) -> Nil {
   case target() {
-    Erlang -> run_beam(rep, filter, timeout_ms, parallel, show_crash_reports)
-    JavaScript -> run_js(rep, filter, timeout_ms, parallel, show_crash_reports)
+    Erlang -> run_beam(rep, filter, timeout_ms, parallel)
+    JavaScript -> run_js(rep, filter, timeout_ms, parallel)
   }
 }
 
@@ -158,9 +127,8 @@ fn run_beam(
   filter: Option(String),
   timeout_ms: Int,
   parallel: config.Parallelism,
-  show_crash_reports: Bool,
 ) -> Nil {
-  capture_diagnostics()
+  redirect_diagnostics_to_stderr()
   let started = now_microseconds()
   let candidates =
     find_test_files()
@@ -190,13 +158,7 @@ fn run_beam(
     1 -> run_sequential(rep, state, tests, timeout_ms)
     n -> run_window(rep, tests, [], 0, state, [], timeout_ms, n)
   }
-  finish(
-    rep,
-    state,
-    list.reverse(outcomes),
-    now_microseconds() - started,
-    show_crash_reports,
-  )
+  finish(rep, state, list.reverse(outcomes), now_microseconds() - started)
 }
 
 fn workers(parallel: config.Parallelism) -> Int {
@@ -282,23 +244,9 @@ fn run_window(
   }
 }
 
-@external(erlang, "vouch_ffi", "capture_diagnostics")
-@external(javascript, "../../vouch_ffi.mjs", "capture_diagnostics")
-fn capture_diagnostics() -> Nil
-
-/// Remove and return every captured BEAM diagnostic, in arrival order.
-@external(erlang, "vouch_ffi", "drain_diagnostics")
-@external(javascript, "../../vouch_ffi.mjs", "drain_diagnostics")
-fn drain_diagnostics() -> List(String)
-
-/// Remove and return the captured BEAM diagnostics whose text contains
-/// `marker`, leaving the rest for `--show-crash-reports`. Public so vouch's
-/// own suite can prove that a deliberately-crashed process's report was
-/// swallowed by the capture handler rather than reaching stderr, without
-/// touching reports that belong to other tests.
-@external(erlang, "vouch_ffi", "take_diagnostics_matching")
-@external(javascript, "../../vouch_ffi.mjs", "take_diagnostics_matching")
-pub fn take_diagnostics_matching(marker: String) -> List(String)
+@external(erlang, "vouch_ffi", "redirect_diagnostics_to_stderr")
+@external(javascript, "../../vouch_ffi.mjs", "redirect_diagnostics_to_stderr")
+fn redirect_diagnostics_to_stderr() -> Nil
 
 fn path_to_module(path: String) -> String {
   path
@@ -354,22 +302,13 @@ fn schedulers_online() -> Int
 // of the test in flight).
 
 /// JavaScript has no cheap process primitive: tests run in-process, so
-/// `--timeout` and `--parallel` do not apply there, and with no BEAM there
-/// are no crash reports for `--show-crash-reports` to show. A documented
-/// target difference — but a flag that will be ignored deserves a loud
-/// note rather than silence.
+/// `--timeout` and `--parallel` do not apply there. A documented target
+/// difference — but a flag that will be ignored deserves a loud note
+/// rather than silence.
 pub fn warn_ineffective_js_flags(
   timeout_ms: Int,
   parallel: config.Parallelism,
-  show_crash_reports: Bool,
 ) -> Nil {
-  case show_crash_reports {
-    False -> Nil
-    True ->
-      term.warn(
-        "--show-crash-reports has no effect on the JavaScript target — there is no BEAM to report crashes",
-      )
-  }
   case timeout_ms == config.default_timeout_ms {
     True -> Nil
     False ->
@@ -391,9 +330,8 @@ fn run_js(
   filter: Option(String),
   timeout_ms: Int,
   parallel: config.Parallelism,
-  show_crash_reports: Bool,
 ) -> Nil {
-  warn_ineffective_js_flags(timeout_ms, parallel, show_crash_reports)
+  warn_ineffective_js_flags(timeout_ms, parallel)
   let started = now_microseconds()
   js_run_tests(
     #(rep.init, [], 0),
@@ -416,13 +354,7 @@ fn run_js(
     },
     fn(state) {
       let #(st, outs, _) = state
-      finish(
-        rep,
-        st,
-        list.reverse(outs),
-        now_microseconds() - started,
-        show_crash_reports,
-      )
+      finish(rep, st, list.reverse(outs), now_microseconds() - started)
     },
   )
 }

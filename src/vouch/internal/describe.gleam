@@ -15,14 +15,12 @@
 //// Shared by every reporter, so the console, TeamCity details and JUnit
 //// failure bodies all say the same thing.
 
-import gleam/dynamic.{type Dynamic}
 import gleam/int
 import gleam/list
-import gleam/option.{type Option}
 import gleam/result
 import gleam/string
 import vouch/internal/gleam_panic.{type AssertedExpression, type GleamPanic}
-import vouch/internal/outcome.{type CrashSite, type FailureDetail}
+import vouch/internal/outcome.{type FailureDetail}
 import vouch/internal/source
 
 /// The body of a failure report: one entry per line, unindented.
@@ -38,43 +36,10 @@ pub fn failure(detail: FailureDetail) -> List(String) {
     outcome.TimeoutDetail(ms) -> [
       "Timed out after " <> int.to_string(ms) <> "ms",
     ]
-    outcome.UnknownDetail(raw, site) -> [
-      "Crashed: " <> crash(raw, site),
-      ..at_line(site)
+    outcome.UnknownDetail(raw) -> ["Crashed: " <> string.inspect(raw)]
+    outcome.ExitDetail(raw) -> [
+      "Test process died: " <> string.inspect(raw),
     ]
-    outcome.ExitDetail(raw, site) -> [
-      "Test process died: " <> crash(raw, site),
-      ..at_line(site)
-    ]
-  }
-}
-
-/// The reason with its call site: `Undef calling filepath:split/1`. The
-/// shared summary every reporter embeds after its own prefix; without a
-/// site — every JavaScript crash — it is the reason alone.
-pub fn crash(raw: Dynamic, site: Option(CrashSite)) -> String {
-  let reason = string.inspect(raw)
-  case site {
-    option.None -> reason
-    option.Some(s) ->
-      reason
-      <> " calling "
-      <> s.module
-      <> ":"
-      <> s.function
-      <> "/"
-      <> int.to_string(s.arity)
-  }
-}
-
-/// Where the crashing frame lives, when the BEAM recorded it — an undef
-/// frame never does, the called function not existing anywhere.
-fn at_line(site: Option(CrashSite)) -> List(String) {
-  case site {
-    option.Some(outcome.CrashSite(location: option.Some(#(file, line)), ..)) -> [
-      "  at " <> file <> ":" <> int.to_string(line),
-    ]
-    _ -> []
   }
 }
 
