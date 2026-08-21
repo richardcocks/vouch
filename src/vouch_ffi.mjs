@@ -79,14 +79,8 @@ export function capture_diagnostics() {
   erlangOnly("capture_diagnostics");
 }
 
-// The run loop drains diagnostics on every target; JavaScript has no
-// logger capture, so there is never anything to hand back.
-export function drain_diagnostics() {
-  return List$Empty();
-}
-
 export function take_diagnostics_matching(_marker) {
-  return List$Empty();
+  erlangOnly("take_diagnostics_matching");
 }
 
 export function find_test_files() {

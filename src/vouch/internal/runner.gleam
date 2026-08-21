@@ -2,8 +2,6 @@
 //// per-target loops live here with the narrow FFI contract at the bottom.
 
 import gleam/dynamic.{type Dynamic}
-import gleam/int
-import gleam/io
 import gleam/list
 import gleam/option.{type Option}
 import gleam/order
@@ -66,33 +64,7 @@ fn finish(
 ) -> Nil {
   let t = tally(outcomes)
   let _ = rep.handle(state, event.RunEnd(t, duration))
-  print_stray_diagnostics(drain_diagnostics())
   halt(exit_code(t))
-}
-
-/// Diagnostics captured during the run (BEAM crash reports from processes
-/// the tests spawned, logger output) are reprinted in one block after the
-/// summary, on stderr: still visible in a terminal, still clear of a
-/// machine-read stdout stream (JSONL, TeamCity), but no longer interleaved
-/// with test output or lost when the VM halts before an asynchronous
-/// report arrives.
-fn print_stray_diagnostics(reports: List(String)) -> Nil {
-  case reports {
-    [] -> Nil
-    _ -> {
-      let noun = case reports {
-        [_] -> "diagnostic"
-        _ -> "diagnostics"
-      }
-      term.warn(
-        int.to_string(list.length(reports))
-        <> " BEAM "
-        <> noun
-        <> " captured during the run:",
-      )
-      list.each(reports, io.print_error)
-    }
-  }
 }
 
 /// Call a function, capturing any panic as the raw target-specific value.
@@ -276,15 +248,10 @@ fn run_window(
 @external(javascript, "../../vouch_ffi.mjs", "capture_diagnostics")
 fn capture_diagnostics() -> Nil
 
-@external(erlang, "vouch_ffi", "drain_diagnostics")
-@external(javascript, "../../vouch_ffi.mjs", "drain_diagnostics")
-fn drain_diagnostics() -> List(String)
-
 /// Remove and return the captured BEAM diagnostics whose text contains
-/// `marker`, leaving the rest for the end-of-run drain. Public so vouch's
-/// own suite can prove that a deliberately-crashed process's report was
-/// captured — and consume it, keeping the suite's tail clean — without
-/// touching reports that belong to other tests.
+/// `marker`. Public so vouch's own suite can prove that a
+/// deliberately-crashed process's report was swallowed by the capture
+/// handler rather than reaching stderr.
 @external(erlang, "vouch_ffi", "take_diagnostics_matching")
 @external(javascript, "../../vouch_ffi.mjs", "take_diagnostics_matching")
 pub fn take_diagnostics_matching(marker: String) -> List(String)

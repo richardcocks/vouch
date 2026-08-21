@@ -139,8 +139,7 @@ pub fn linked_crash_is_contained_test() {
   assert p.message == "crash in linked process"
   // The linked process's death also reaches the emulator, which logs an
   // "Error in process" report asynchronously. It must land in the capture
-  // buffer rather than interleaving with test output; consuming it here
-  // also keeps it out of this suite's own end-of-run diagnostics block.
+  // buffer, never on stderr.
   let assert [report, ..] = await_diagnostics("crash in linked process", 40)
   assert string.contains(report, "Error in process")
 }
@@ -178,8 +177,7 @@ pub fn otp_wrapped_todo_is_todo_outcome_test() {
   assert p.module == "helpers"
   assert p.function == "unimplemented"
   // gen_server logs its terminating report (and proc_lib its crash report)
-  // on the way down; both must be captured, not printed mid-run. Consumed
-  // here so the suite's own end-of-run diagnostics block stays empty.
+  // on the way down; both must be captured, never printed.
   let reports = await_diagnostics("vouch_otp_fixture", 40)
   assert reports != []
 }
@@ -280,7 +278,7 @@ pub fn linked_undef_crash_names_call_site_test() {
   assert site.function == "boom"
   assert site.arity == 0
   // The linked process's undef also produces an emulator report; assert it
-  // was captured and consume it, keeping this suite's tail clean.
+  // was captured rather than printed.
   let assert [_, ..] = await_diagnostics("vouch_no_such_module", 40)
 }
 

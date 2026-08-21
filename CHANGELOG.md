@@ -17,12 +17,12 @@ structured `site_module` / `site_function` / `site_arity` (plus
 unchanged: a JS stacktrace is an unparsed string, so there is no site to
 extract.
 
-On the Erlang target, BEAM diagnostics (crash reports from processes the
-tests spawned, and anything else routed through OTP's logger) are now
-captured during the run and reprinted as a single block on stderr after
-the summary, instead of interleaving with test output mid-run. This also
-stops reports being lost entirely when the VM halted before an
-asynchronous report arrived.
+On the Erlang target, BEAM crash reports from processes the tests spawned
+(and anything else routed through OTP's logger) are no longer printed.
+They used to arrive asynchronously on stderr, interleaved with test
+output; a process that dies under a test is already reported through the
+test's own outcome, so the BEAM's report of the same death was only ever
+a duplicate.
 
 ## v1.2.0
 
