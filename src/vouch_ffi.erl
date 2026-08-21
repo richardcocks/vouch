@@ -10,6 +10,7 @@
     is_stdout_tty/0,
     env/1,
     capture_diagnostics/0,
+    drain_diagnostics/0,
     take_diagnostics_matching/1,
     log/2,
     write_file/2,
@@ -81,10 +82,12 @@ env(Name) ->
 %% the BEAM's report of the same death is a duplicate. This module doubles
 %% as the logger handler: log/2 renders each event with the formatter the
 %% default handler would have used and stashes the text in a public ETS
-%% table, which is never printed — it exists so vouch's own suite can
-%% prove the reports were captured. If the capture handler cannot be
-%% installed, fall back to redirecting the default handler to stderr:
-%% reports on stderr beat reports corrupting a machine-read stdout stream.
+%% table. The runner drains and prints that table after the summary only
+%% when asked (--show-crash-reports); otherwise it is never read, except by
+%% vouch's own suite proving the reports were captured. If the capture
+%% handler cannot be installed, fall back to redirecting the default
+%% handler to stderr: reports on stderr beat reports corrupting a
+%% machine-read stdout stream.
 capture_diagnostics() ->
     catch case logger:get_handler_config(vouch_diagnostics) of
         {ok, _} ->
@@ -138,21 +141,33 @@ render_diagnostic(Event, Config) ->
             unicode:characters_to_binary(io_lib:format("~0tp~n", [Event]))
     end.
 
+%% All captured diagnostics in arrival order, removed from the table. Only
+%% the returned rows are deleted, so an event arriving mid-drain is kept
+%% rather than silently discarded.
+drain_diagnostics() ->
+    take_diagnostics(fun(_Text) -> true end).
+
 %% Remove and return only the captured diagnostics whose text contains
 %% Marker, leaving the rest alone. The suite-facing probe: a spec that
 %% deliberately crashes a process can assert its report was captured
-%% without touching reports that belong to other tests. Emulator-generated
-%% reports travel through the logger server's mailbox, so a synchronous
-%% round-trip first makes sure everything already sent is in the table.
+%% without touching reports that belong to other tests.
 take_diagnostics_matching(Marker) ->
+    take_diagnostics(fun(Text) ->
+        binary:match(Text, Marker) =/= nomatch
+    end).
+
+%% Emulator-generated reports travel through the logger server's mailbox
+%% (API-call events are handled in the logging process itself, before the
+%% crash propagates), so a synchronous round-trip first makes sure
+%% everything already sent is in the table before it is read.
+take_diagnostics(Keep) ->
     catch sys:get_state(logger, 1000),
     case catch ets:tab2list(vouch_diagnostics) of
         Rows when is_list(Rows) ->
             [begin
                  catch ets:delete(vouch_diagnostics, Key),
                  Text
-             end || {Key, Text} <- Rows,
-                    binary:match(Text, Marker) =/= nomatch];
+             end || {Key, Text} <- Rows, Keep(Text)];
         _ ->
             []
     end.

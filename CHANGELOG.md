@@ -22,7 +22,9 @@ On the Erlang target, BEAM crash reports from processes the tests spawned
 They used to arrive asynchronously on stderr, interleaved with test
 output; a process that dies under a test is already reported through the
 test's own outcome, so the BEAM's report of the same death was only ever
-a duplicate.
+a duplicate. A new `--show-crash-reports` flag prints the captured reports
+as one block on stderr after the summary, for when the full BEAM report is
+wanted after all.
 
 ## v1.2.0
 

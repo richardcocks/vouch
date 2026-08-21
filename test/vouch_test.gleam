@@ -596,6 +596,7 @@ pub fn config_defaults_test() {
       timeout_ms: config.default_timeout_ms,
       color: config.Auto,
       parallel: config.Sequential,
+      show_crash_reports: False,
     ))
 }
 
@@ -608,6 +609,7 @@ pub fn config_format_and_filter_test() {
       timeout_ms: config.default_timeout_ms,
       color: config.Auto,
       parallel: config.Sequential,
+      show_crash_reports: False,
     ))
   assert config.from_args([
       "--filter=decode",
@@ -621,6 +623,7 @@ pub fn config_format_and_filter_test() {
       timeout_ms: 250,
       color: config.Auto,
       parallel: config.Sequential,
+      show_crash_reports: False,
     ))
 }
 
@@ -646,6 +649,13 @@ pub fn config_parallel_test() {
     config.from_args(["--parallel=4"])
   let assert Error(_) = config.from_args(["--parallel=0"])
   let assert Error(_) = config.from_args(["--parallel=lots"])
+}
+
+pub fn config_show_crash_reports_test() {
+  let assert Ok(config.Config(show_crash_reports: True, ..)) =
+    config.from_args(["--show-crash-reports"])
+  // A flag, not an option: a value is an error like any unknown flag.
+  let assert Error(_) = config.from_args(["--show-crash-reports=yes"])
 }
 
 pub fn config_color_test() {

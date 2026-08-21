@@ -79,6 +79,13 @@ export function capture_diagnostics() {
   erlangOnly("capture_diagnostics");
 }
 
+// The run loop drains on every target when --show-crash-reports is given;
+// JavaScript has no logger capture, so there is never anything to hand
+// back (the flag is warned about as ineffective).
+export function drain_diagnostics() {
+  return List$Empty();
+}
+
 export function take_diagnostics_matching(_marker) {
   erlangOnly("take_diagnostics_matching");
 }
