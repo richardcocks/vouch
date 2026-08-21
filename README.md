@@ -90,12 +90,8 @@ On Deno, watch mode also needs `allow_run = ["gleam"]` to spawn the inner runs (
 
 ## Crash reports
 
-On the Erlang target, a process that dies under a test (an actor hitting a `todo`, a linked
-process crashing) is reported through the test's own outcome. The BEAM also writes its own
-crash report for the same death — asynchronously, to stderr, interleaved with whatever the
-runner was printing. vouch captures those instead of letting them through, so test output
-stays clean. Pass `--show-crash-reports` to get them back: they are printed as one block on
-stderr after the summary.
+To keep the output of vouch clean, vouch catches and suppresses any errors coming out of dying OTP processes. 
+If you need to inspect these crash reports, there is the option `--show-crash-reports`. These will be printed to stderr after the summary.
 
 ## Target differences
 
