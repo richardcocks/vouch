@@ -2,29 +2,9 @@
 
 ## Unreleased
 
-Crash reports now name what was being called. A test that dies with a
-non-Gleam error (an undef from a stale or missing .beam, an FFI crash)
-previously reported only the bare reason — "Crashed: Undef" — with the
-failing call discarded. The stacktrace's top frame is now carried into the
-report on the Erlang target:
-
-    Crashed: Undef calling config_parser:parse/1
-
-with an `at file:line` line when the frame carries one. The same site
-reaches the TeamCity and JUnit failure messages, and the JSONL stream as
-structured `site_module` / `site_function` / `site_arity` (plus
-`site_file` / `site_line` when known) fields. JavaScript crashes are
-unchanged: a JS stacktrace is an unparsed string, so there is no site to
-extract.
-
-On the Erlang target, BEAM crash reports from processes the tests spawned
-(and anything else routed through OTP's logger) are no longer printed.
-They used to arrive asynchronously on stderr, interleaved with test
-output; a process that dies under a test is already reported through the
-test's own outcome, so the BEAM's report of the same death was only ever
-a duplicate. A new `--show-crash-reports` flag prints the captured reports
-as one block on stderr after the summary, for when the full BEAM report is
-wanted after all.
+To keep the output of vouch clean, vouch now catches and suppresses any errors coming out of dying OTP processes.
+If you need to inspect these crash reports, there is now the option `--show-crash-reports`.
+These will be printed to stderr after the summary.
 
 ## v1.2.0
 
