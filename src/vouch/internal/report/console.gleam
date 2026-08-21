@@ -1,5 +1,6 @@
 //// The default console reporter. Prints a line per result as events arrive,
-//// buffers failures and todos, and renders details plus a summary at RunEnd.
+//// buffers failures and todos, and renders todos, then failure details,
+//// then a summary at RunEnd.
 
 import gleam/dict
 import gleam/int
@@ -60,8 +61,8 @@ fn handle(style: Style, state: State, e: Event) -> State {
       }
     }
     event.RunEnd(tally, duration) -> {
-      print_failures(style, list.reverse(state.failures))
       print_todos(style, list.reverse(state.todos))
+      print_failures(style, list.reverse(state.failures))
       print_summary(style, state.discovered, tally, duration)
       state
     }
