@@ -23,12 +23,21 @@ fidelity for ordinary failures. The runner waits on three possibilities:
   killed and reported as a timeout failure. A hung test costs its timeout,
   not the whole run.
 
-BEAM diagnostics (crash reports for processes that tests spawned) are routed
-to stderr at run start by re-adding the default logger handler with
-`type: standard_error` — they stay visible in a terminal but can never
-corrupt piped stdout. (`logger:update_handler_config` silently ignores a
-runtime type change; remove-and-re-add is required. The reports are
-asynchronous and are often lost to `erlang:halt` entirely.)
+BEAM crash reports (a process the test started dying: the emulator's "Error
+in process", proc_lib crash reports, gen_\* terminate and supervisor child
+reports) are diverted at run start from the default logger handler into an
+ETS table, by a capture handler whose filter admits only crash-shaped events.
+Each test process runs under its own group leader — a proxy forwarding io to
+the real one — which every process it starts inherits and every crash report
+records, so after each test the runner claims the reports charged to it and
+folds them into the outcome: a passing test whose worker crashed fails
+(`BackgroundCrashDetail`), or is a todo if the worker died of a `todo`.
+Reports nobody claimed (arrived after their test finished, or from outside
+any test) are printed at the end and fail the run. The default handler is
+re-added with `type: standard_error` for everything else routed through
+logger, so it stays visible but can never corrupt piped stdout.
+(`logger:update_handler_config` silently ignores a runtime type change;
+remove-and-re-add is required.)
 
 Known limitation, accepted for v1: a test that spawns unlinked long-lived
 processes, registers global names, or mutates shared ETS tables can still

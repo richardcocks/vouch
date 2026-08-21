@@ -83,8 +83,48 @@ pub fn crashes_linked_undef() -> Nil {
 }
 
 @target(erlang)
+/// A fire-and-forget worker that panics: unlinked, unmonitored by the
+/// caller, so nothing but the BEAM's crash report records the death. The
+/// caller waits for the worker to be gone before returning, so the report
+/// is always in flight by the time the test's result reaches the runner.
+pub fn crashes_in_background() -> Nil {
+  run_in_background(fn() { panic as "crash in background process" })
+}
+
+@target(erlang)
+/// The same, but the worker hits unimplemented code: the crash report
+/// carries a todo, which must classify as a Todo outcome, not a failure.
+pub fn todo_in_background() -> Nil {
+  run_in_background(unimplemented)
+}
+
+@target(erlang)
+/// The same, but a raw non-Gleam error: an undef with no Gleam payload.
+pub fn undef_in_background() -> Nil {
+  run_in_background(calls_missing_function)
+}
+
+@target(erlang)
+/// A worker that dies only after the caller has returned: its crash report
+/// can never be claimed by the test that started it.
+pub fn crashes_after_returning() -> Nil {
+  spawn(fn() {
+    sleep(50)
+    panic as "late crash in background process"
+  })
+}
+
+@target(erlang)
 @external(erlang, "timer", "sleep")
 fn sleep(ms: Int) -> Nil
+
+@target(erlang)
+@external(erlang, "vouch_helpers_ffi", "run_in_background")
+fn run_in_background(f: fn() -> Nil) -> Nil
+
+@target(erlang)
+@external(erlang, "erlang", "spawn")
+fn spawn(f: fn() -> Nil) -> Nil
 
 // The pid is discarded, so the dishonest Nil return type is harmless here.
 @target(erlang)

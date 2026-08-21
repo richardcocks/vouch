@@ -79,10 +79,15 @@ export function capture_diagnostics() {
   erlangOnly("capture_diagnostics");
 }
 
-// The run loop drains on every target when --show-crash-reports is given;
-// JavaScript has no logger capture, so there is never anything to hand
-// back (the flag is warned about as ineffective).
-export function drain_diagnostics() {
+// The run loop reads the crash-report table on every target at the end of
+// the run; JavaScript has no processes to crash behind a test and no
+// logger capture, so there is never anything to hand back
+// (--show-crash-reports is warned about as ineffective).
+export function all_diagnostics() {
+  return List$Empty();
+}
+
+export function unattributed_diagnostics() {
   return List$Empty();
 }
 

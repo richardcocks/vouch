@@ -84,14 +84,30 @@ On Deno, watch mode also needs `allow_run = ["gleam"]` to spawn the inner runs (
 | Outcome | Meaning | Exit code contribution |
 | --- | --- | --- |
 | pass | ran without panic | 0 |
-| fail | assert/panic/crash/timeout | 1 |
-| todo | hit `todo` in code under test | 1 — unimplemented is still not done |
+| fail | assert/panic/crash/timeout, or a process the test started crashed | 1 |
+| todo | hit `todo` in code under test (directly or in a process it started) | 1 — unimplemented is still not done |
 | skip | `todo` within test function | 0 |
 
 ## Crash reports
 
-To keep the output of vouch clean, vouch catches and suppresses any errors coming out of dying OTP processes. 
-If you need to inspect these crash reports, there is the option `--show-crash-reports`. These will be printed to stderr after the summary.
+On the Erlang target, a process that dies *with* a test (a linked process crashing, an actor
+the test is calling hitting a `todo`) is reported through the test's own outcome. A process
+that dies *behind* a test — an unlinked worker, a fire-and-forget job nothing is monitoring —
+would leave the test passing, with the BEAM's crash report as the only trace. vouch captures
+those reports and charges each to the test whose process died (every process a test starts
+inherits its group leader, which the report records), so the test fails:
+
+```
+  playground_test.background_job_test
+    Background process crashed at src/playground.gleam:26
+      background job crashed: queue is full
+```
+
+If the process died of a `todo`, the test is a todo instead. A report that arrives after its
+test has finished, or from a process no test started, is printed on stderr at the end and fails
+the run. Other logger output (a library's warnings) is not a crash; it goes to stderr as
+before. Pass `--show-crash-reports` to also get the full BEAM reports, printed as one block on
+stderr after the summary.
 
 ## Target differences
 

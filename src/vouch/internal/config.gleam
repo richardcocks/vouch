@@ -34,9 +34,10 @@ pub type Config {
     timeout_ms: Int,
     color: ColorChoice,
     parallel: Parallelism,
-    /// Reprint the BEAM crash reports captured during the run (processes
-    /// the tests spawned dying) after the summary. Off by default: a death
-    /// under a test already shows in the test's outcome.
+    /// Reprint, in full, the BEAM crash reports captured during the run
+    /// (processes the tests started dying) after the summary. Off by
+    /// default: a death under a test already shows in the test's outcome,
+    /// as its own failure or a "Background process crashed" one.
     show_crash_reports: Bool,
   )
 }
@@ -139,8 +140,8 @@ fn usage(problem: String) -> String {
   <> "  --parallel[=n]  run tests concurrently on the Erlang target with n\n"
   <> "                  workers (default: one per scheduler)\n"
   <> "  --show-crash-reports\n"
-  <> "                  print the BEAM crash reports of processes that died\n"
-  <> "                  during the run after the summary (Erlang target)\n"
+  <> "                  also print the full BEAM crash reports of processes\n"
+  <> "                  that died during the run, after the summary (Erlang)\n"
   <> "  --color=mode    console colour: auto (default), always, never;\n"
   <> "                  auto respects NO_COLOR and non-TTY output\n"
   <> "\n"

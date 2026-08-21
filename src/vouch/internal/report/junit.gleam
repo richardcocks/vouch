@@ -134,6 +134,13 @@ fn test_case(r: Case) -> String {
       <> ">\n      <failure type=\"died\" message=\""
       <> escape(describe.crash(raw, site))
       <> "\"/>\n    </testcase>\n"
+    outcome.Failed(outcome.BackgroundCrashDetail(_) as detail) ->
+      open
+      <> ">\n      <failure type=\"background_crash\" message=\""
+      <> escape("a process the test started crashed")
+      <> "\">"
+      <> escape(string.join(describe.failure(detail), "\n"))
+      <> "</failure>\n    </testcase>\n"
   }
 }
 

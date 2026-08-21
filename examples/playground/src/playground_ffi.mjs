@@ -8,8 +8,8 @@ export function sleep(ms) {
 
 // JavaScript has no process to leak: a thrown error in a deferred callback
 // would take the whole runtime down, not a sibling. The job is simply not
-// run, so the calling test passes on both targets and only the BEAM has a
-// crash report to show.
+// run, so background_job_test passes on JavaScript and fails on the BEAM,
+// where the worker really does crash — a documented target difference.
 export function spawn(_job) {}
 
 // The JavaScript half of parse_config: a raw runtime error, standing in for

@@ -122,6 +122,12 @@ fn failure(function: String, detail: outcome.FailureDetail) -> String {
       failed(function, "timed out after " <> int.to_string(ms) <> "ms", "")
     outcome.ExitDetail(raw, site) ->
       failed(function, "test process died", describe.crash(raw, site))
+    outcome.BackgroundCrashDetail(_) ->
+      failed(
+        function,
+        "a process the test started crashed",
+        string.join(describe.failure(detail), "\n"),
+      )
   }
 }
 

@@ -90,6 +90,12 @@ fn outcome_fields(out: TestOutcome) -> List(#(String, json.Value)) {
     outcome.Failed(outcome.ExitDetail(raw, site)) ->
       [#("kind", Str("died")), #("message", Str(string.inspect(raw)))]
       |> list.append(site_fields(site))
+    // The cause is nested, encoded exactly as the same crash would be for
+    // the test itself, so consumers reuse their failure decoding for it.
+    outcome.Failed(outcome.BackgroundCrashDetail(cause)) -> [
+      #("kind", Str("background_crash")),
+      #("cause", Obj(outcome_fields(outcome.Failed(cause)))),
+    ]
   }
 }
 

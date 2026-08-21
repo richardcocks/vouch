@@ -67,33 +67,70 @@ fn finish(
 ) -> Nil {
   let t = tally(outcomes)
   let _ = rep.handle(state, event.RunEnd(t, duration))
+  let unattributed = unattributed_crash_reports()
+  print_unattributed(unattributed)
   case show_crash_reports {
-    True -> print_crash_reports(drain_diagnostics())
+    True -> print_crash_reports(all_crash_reports())
     False -> Nil
   }
-  halt(exit_code(t))
+  case unattributed {
+    [] -> halt(exit_code(t))
+    // A crash no outcome accounts for must not hide behind a green run.
+    _ -> halt(1)
+  }
 }
 
-/// `--show-crash-reports`: the BEAM diagnostics captured during the run
-/// (crash reports from processes the tests spawned, logger output),
-/// reprinted as one block after the summary on stderr — visible in a
-/// terminal, clear of a machine-read stdout stream (JSONL, TeamCity).
+/// Crash reports no test claimed: the process died after its test had
+/// finished (named here, from the group leader it inherited), or outside
+/// any test. Printed on stderr — clear of a machine-read stdout stream —
+/// and the run fails.
+fn print_unattributed(
+  reports: List(#(String, Option(#(String, String)))),
+) -> Nil {
+  case reports {
+    [] -> Nil
+    _ -> {
+      term.warn(
+        count(reports, "crash report")
+        <> " not charged to any test — the run fails:",
+      )
+      list.each(reports, fn(report) {
+        let #(text, owner) = report
+        case owner {
+          option.Some(#(module, function)) ->
+            io.print_error(
+              "vouch: from a process started by "
+              <> module
+              <> "."
+              <> function
+              <> ", which died after the test finished:\n",
+            )
+          option.None ->
+            io.print_error("vouch: from a process no test started:\n")
+        }
+        io.print_error(text)
+      })
+    }
+  }
+}
+
+/// `--show-crash-reports`: every BEAM crash report captured during the run,
+/// attributed or not, reprinted in full as one block after the summary on
+/// stderr — the raw report behind a "Background process crashed" failure.
 fn print_crash_reports(reports: List(String)) -> Nil {
   case reports {
     [] -> Nil
     _ -> {
-      let noun = case reports {
-        [_] -> "crash report"
-        _ -> "crash reports"
-      }
-      term.warn(
-        int.to_string(list.length(reports))
-        <> " "
-        <> noun
-        <> " captured during the run:",
-      )
+      term.warn(count(reports, "crash report") <> " captured during the run:")
       list.each(reports, io.print_error)
     }
+  }
+}
+
+fn count(items: List(a), noun: String) -> String {
+  case items {
+    [_] -> "1 " <> noun
+    _ -> int.to_string(list.length(items)) <> " " <> noun <> "s"
   }
 }
 
@@ -218,9 +255,11 @@ fn run_sequential(
     let #(module, function) = test_case
     let state = rep.handle(state, event.TestStart(module, function))
     let test_started = now_microseconds()
-    let invocation = run_in_process(module, function, timeout_ms)
+    let #(invocation, reports) = run_in_process(module, function, timeout_ms)
     let duration = now_microseconds() - test_started
-    let out = outcome.classify(module, function, invocation)
+    let out =
+      outcome.classify(module, function, invocation)
+      |> outcome.with_crash_reports(module, function, reports)
     let state =
       rep.handle(state, event.TestResult(module, function, out, duration))
     #(state, [out, ..outcomes])
@@ -263,8 +302,10 @@ fn run_window(
       case running {
         [] -> #(state, outcomes)
         [#(module, function, handle), ..running_rest] -> {
-          let #(invocation, duration) = await_test(handle)
-          let out = outcome.classify(module, function, invocation)
+          let #(invocation, reports, duration) = await_test(handle)
+          let out =
+            outcome.classify(module, function, invocation)
+            |> outcome.with_crash_reports(module, function, reports)
           let state =
             rep.handle(state, event.TestResult(module, function, out, duration))
           run_window(
@@ -282,20 +323,29 @@ fn run_window(
   }
 }
 
+/// Divert BEAM crash reports from the default logger handler into a table
+/// the runner reads after each test (see vouch_ffi.erl). Installed once per
+/// run, before any test starts.
 @external(erlang, "vouch_ffi", "capture_diagnostics")
 @external(javascript, "../../vouch_ffi.mjs", "capture_diagnostics")
 fn capture_diagnostics() -> Nil
 
-/// Remove and return every captured BEAM diagnostic, in arrival order.
-@external(erlang, "vouch_ffi", "drain_diagnostics")
-@external(javascript, "../../vouch_ffi.mjs", "drain_diagnostics")
-fn drain_diagnostics() -> List(String)
+/// The text of every captured crash report, in arrival order.
+@external(erlang, "vouch_ffi", "all_diagnostics")
+@external(javascript, "../../vouch_ffi.mjs", "all_diagnostics")
+fn all_crash_reports() -> List(String)
 
-/// Remove and return the captured BEAM diagnostics whose text contains
-/// `marker`, leaving the rest for `--show-crash-reports`. Public so vouch's
-/// own suite can prove that a deliberately-crashed process's report was
-/// swallowed by the capture handler rather than reaching stderr, without
-/// touching reports that belong to other tests.
+/// The captured crash reports no test claimed, each with the test whose
+/// process tree the dying process belonged to, when it was one.
+@external(erlang, "vouch_ffi", "unattributed_diagnostics")
+@external(javascript, "../../vouch_ffi.mjs", "unattributed_diagnostics")
+fn unattributed_crash_reports() -> List(#(String, Option(#(String, String))))
+
+/// Remove and return the captured crash reports whose text contains
+/// `marker`, leaving the rest alone. Public so vouch's own suite can crash a
+/// process in its own process tree on purpose, consume the report (so the
+/// test is not charged with it) and assert it was captured rather than
+/// printed, without touching reports that belong to other tests.
 @external(erlang, "vouch_ffi", "take_diagnostics_matching")
 @external(javascript, "../../vouch_ffi.mjs", "take_diagnostics_matching")
 pub fn take_diagnostics_matching(marker: String) -> List(String)
@@ -315,23 +365,26 @@ fn find_test_files() -> List(String)
 fn exported_zero_arity(module: String) -> List(String)
 
 /// Run one exported zero-arity function in its own monitored process with a
-/// timeout. Public so vouch's own suite can exercise isolation directly.
+/// timeout, and collect the crash reports of processes it started that died
+/// while it ran. Public so vouch's own suite can exercise isolation
+/// directly.
 @external(erlang, "vouch_ffi", "run_test")
 @external(javascript, "../../vouch_ffi.mjs", "run_test")
 pub fn run_in_process(
   module: String,
   function: String,
   timeout_ms: Int,
-) -> outcome.Invocation
+) -> #(outcome.Invocation, List(outcome.CrashReport))
 
 /// An in-flight test started by `start_test`: created and consumed only by
 /// the FFI.
 pub type TestHandle
 
 /// Start one test without waiting for it. The spawned middleman runs the
-/// same run_test as the sequential path — identical isolation and timeout
-/// semantics — and `await_test` collects the invocation and its duration
-/// in microseconds. Public so the suite can prove concurrency directly.
+/// same run_test as the sequential path — identical isolation, timeout and
+/// crash-report semantics — and `await_test` collects the invocation, the
+/// crash reports charged to the test, and its duration in microseconds.
+/// Public so the suite can prove concurrency directly.
 @external(erlang, "vouch_ffi", "start_test")
 @external(javascript, "../../vouch_ffi.mjs", "start_test")
 pub fn start_test(
@@ -342,7 +395,9 @@ pub fn start_test(
 
 @external(erlang, "vouch_ffi", "await_test")
 @external(javascript, "../../vouch_ffi.mjs", "await_test")
-pub fn await_test(handle: TestHandle) -> #(outcome.Invocation, Int)
+pub fn await_test(
+  handle: TestHandle,
+) -> #(outcome.Invocation, List(outcome.CrashReport), Int)
 
 @external(erlang, "vouch_ffi", "schedulers_online")
 @external(javascript, "../../vouch_ffi.mjs", "schedulers_online")

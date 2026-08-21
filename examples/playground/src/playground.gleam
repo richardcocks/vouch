@@ -18,9 +18,10 @@ pub fn rate_limit(_requests: Int) -> Bool {
 pub fn sleep(ms: Int) -> Nil
 
 /// A fire-and-forget worker with a bug: the caller gets Nil back and
-/// carries on, while the unlinked process it started dies. The test that
-/// calls this passes — the crash is only visible through the BEAM's crash
-/// report, which vouch swallows unless `--show-crash-reports` is given.
+/// carries on, while the unlinked process it started dies. Nothing is
+/// linked to or monitoring the worker, so the calling test would pass —
+/// the BEAM's crash report is the only trace of the death, and vouch
+/// charges it to the test as a "Background process crashed" failure.
 pub fn start_background_job() -> Nil {
   spawn(fn() { panic as "background job crashed: queue is full" })
 }

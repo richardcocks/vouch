@@ -46,7 +46,30 @@ pub fn failure(detail: FailureDetail) -> List(String) {
       "Test process died: " <> crash(raw, site),
       ..at_line(site)
     ]
+    outcome.BackgroundCrashDetail(cause) -> background_crash(cause)
   }
+}
+
+/// A process the test started died behind its back. The cause is rendered
+/// the way the same crash would be for the test itself — a panic's
+/// expectation lines, a raw reason with its call site — under a first line
+/// that says a background process is what died, and where.
+fn background_crash(cause: FailureDetail) -> List(String) {
+  case cause {
+    outcome.PanicDetail(p) -> [
+      "Background process crashed at " <> location(p),
+      ..list.map(failure(cause), indent)
+    ]
+    outcome.UnknownDetail(raw, site) -> [
+      "Background process crashed: " <> crash(raw, site),
+      ..at_line(site)
+    ]
+    _ -> ["Background process crashed", ..list.map(failure(cause), indent)]
+  }
+}
+
+fn indent(line: String) -> String {
+  "  " <> line
 }
 
 /// The reason with its call site: `Undef calling filepath:split/1`. The

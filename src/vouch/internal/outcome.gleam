@@ -6,6 +6,7 @@
 //// it fails the run, but reported distinctly from a broken test.
 
 import gleam/dynamic.{type Dynamic}
+import gleam/list
 import gleam/option.{type Option}
 import vouch/internal/gleam_panic.{type GleamPanic}
 
@@ -40,6 +41,21 @@ pub type FailureDetail {
   /// The test process died without reporting: an exit signal it did not
   /// cause by panicking, e.g. an explicit exit.
   ExitDetail(raw: Dynamic, site: Option(CrashSite))
+  /// A process the test started died while the test ran, without taking
+  /// the test down with it — an unlinked worker, a fire-and-forget job.
+  /// The test itself may have passed; the BEAM's crash report for the
+  /// death was captured and charged to the test (Erlang target only).
+  /// `cause` is what killed the process: a `PanicDetail` for a Gleam
+  /// panic or failed assertion, an `UnknownDetail` for anything else.
+  BackgroundCrashDetail(cause: FailureDetail)
+}
+
+/// The BEAM's report of a process dying while a test ran, as captured by
+/// the runner's logger handler: the exit reason the report carried (a
+/// Gleam panic map for a panic, assert or todo; a raw term otherwise) and
+/// the report text as the default handler would have printed it.
+pub type CrashReport {
+  CrashReport(reason: Dynamic, text: String)
 }
 
 /// The top frame of the stacktrace behind a non-Gleam crash: what was being
@@ -115,5 +131,54 @@ pub fn classify_panic(
         False -> Todo(p)
       }
     _ -> Failed(PanicDetail(p))
+  }
+}
+
+/// Fold the crash reports charged to a test into its outcome. A process
+/// the test started and died behind its back is a failure of the test —
+/// or a Todo, when what killed the process was unimplemented code, by the
+/// same rule as a todo the test reached directly. The more severe verdict
+/// wins (Failed over Todo over Skipped over Pass), the test's own on a tie:
+/// a test that failed on its own keeps its own failure, and the reports
+/// stay available to `--show-crash-reports`.
+pub fn with_crash_reports(
+  own: TestOutcome,
+  test_module: String,
+  test_function: String,
+  reports: List(CrashReport),
+) -> TestOutcome {
+  list.fold(reports, own, fn(worst, report) {
+    let crash = classify_report(test_module, test_function, report)
+    case severity(crash) > severity(worst) {
+      True -> crash
+      False -> worst
+    }
+  })
+}
+
+fn classify_report(
+  test_module: String,
+  test_function: String,
+  report: CrashReport,
+) -> TestOutcome {
+  case gleam_panic.from_dynamic(report.reason) {
+    Ok(p) ->
+      case classify_panic(test_module, test_function, p) {
+        Failed(cause) -> Failed(BackgroundCrashDetail(cause))
+        todo_or_skipped -> todo_or_skipped
+      }
+    Error(Nil) -> {
+      let #(reason, site) = split_crash(report.reason)
+      Failed(BackgroundCrashDetail(UnknownDetail(reason, site)))
+    }
+  }
+}
+
+fn severity(out: TestOutcome) -> Int {
+  case out {
+    Pass -> 0
+    Skipped(_) -> 1
+    Todo(_) -> 2
+    Failed(_) -> 3
   }
 }

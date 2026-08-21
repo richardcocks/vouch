@@ -1,13 +1,16 @@
 //// One test per outcome flavour, so a plain run shows vouch's full range:
 ////
-////   gleam test                        - 3 pass, 4 fail, 2 todo, 1 skip
+////   gleam test                        - 2 pass, 5 fail, 2 todo, 1 skip
+////                                       (JavaScript: 3 pass, 4 fail — no
+////                                       process crashes behind
+////                                       background_job_test there)
 ////   gleam test -- --timeout=100       - slow_test also fails as a timeout
 ////   gleam test -- --filter=slow       - just the slow test
 ////   gleam test -- --format=json       - the same as a JSONL stream
 ////   gleam test -- --junit=report.xml  - plus a CI-ready XML report
 ////   gleam test -- --show-crash-reports
-////                                     - plus the BEAM crash report from
-////                                       background_job_test's worker
+////                                     - plus the full BEAM crash report
+////                                       from background_job_test's worker
 
 import playground
 import vouch
@@ -20,12 +23,17 @@ pub fn fast_pass_test() {
   assert playground.add(1, 2) == 3
 }
 
-/// Passes — but the unlinked worker it starts crashes behind its back. The
-/// only trace is the BEAM's crash report, which vouch captures and keeps
-/// out of the test output; `--show-crash-reports` prints it after the
-/// summary. (On JavaScript there is no worker, so nothing crashes.)
+/// The test body passes — but the unlinked worker it starts crashes behind
+/// its back, and nothing is linked to or monitoring it. The BEAM's crash
+/// report is the only trace; vouch charges it to this test, which fails as
+/// "Background process crashed". `--show-crash-reports` prints the raw
+/// report too. (On JavaScript there is no worker, so this passes.)
 pub fn background_job_test() {
   playground.start_background_job()
+  // Give the job a moment, as a test of fire-and-forget code typically
+  // does; it also makes the worker's death land before the test ends, so
+  // the outcome is the same on a one-scheduler CI box.
+  playground.sleep(20)
   assert playground.add(0, 0) == 0
 }
 
