@@ -1,10 +1,13 @@
 //// One test per outcome flavour, so a plain run shows vouch's full range:
 ////
-////   gleam test                        - 2 pass, 4 fail, 2 todo, 1 skip
+////   gleam test                        - 3 pass, 4 fail, 2 todo, 1 skip
 ////   gleam test -- --timeout=100       - slow_test also fails as a timeout
 ////   gleam test -- --filter=slow       - just the slow test
 ////   gleam test -- --format=json       - the same as a JSONL stream
 ////   gleam test -- --junit=report.xml  - plus a CI-ready XML report
+////   gleam test -- --show-crash-reports
+////                                     - plus the BEAM crash report from
+////                                       background_job_test's worker
 
 import playground
 import vouch
@@ -15,6 +18,15 @@ pub fn main() -> Nil {
 
 pub fn fast_pass_test() {
   assert playground.add(1, 2) == 3
+}
+
+/// Passes — but the unlinked worker it starts crashes behind its back. The
+/// only trace is the BEAM's crash report, which vouch captures and keeps
+/// out of the test output; `--show-crash-reports` prints it after the
+/// summary. (On JavaScript there is no worker, so nothing crashes.)
+pub fn background_job_test() {
+  playground.start_background_job()
+  assert playground.add(0, 0) == 0
 }
 
 /// Passes with the default 5000ms timeout; fails with --timeout=100.

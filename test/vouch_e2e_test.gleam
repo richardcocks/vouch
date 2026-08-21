@@ -18,7 +18,7 @@ pub fn playground_erlang_e2e_test() {
   assert code == 1
   assert string.contains(
     out,
-    "\"event\":\"run_end\",\"passed\":2,\"failed\":4,\"todo\":2,\"skipped\":1",
+    "\"event\":\"run_end\",\"passed\":3,\"failed\":4,\"todo\":2,\"skipped\":1",
   )
   assert string.contains(out, "\"outcome\":\"todo\"")
   assert string.contains(out, "\"site_function\":\"rate_limit\"")
@@ -53,7 +53,7 @@ pub fn playground_javascript_e2e_test() {
   assert code == 1
   assert string.contains(
     out,
-    "\"event\":\"run_end\",\"passed\":2,\"failed\":4,\"todo\":2,\"skipped\":1",
+    "\"event\":\"run_end\",\"passed\":3,\"failed\":4,\"todo\":2,\"skipped\":1",
   )
   // On JavaScript the crash is a raw TypeError with no site to extract.
   assert string.contains(out, "\"kind\":\"unknown\"")
@@ -72,7 +72,7 @@ pub fn playground_timeout_e2e_test() {
   assert string.contains(out, "\"timeout_ms\":100")
   assert string.contains(
     out,
-    "\"event\":\"run_end\",\"passed\":1,\"failed\":5,\"todo\":2,\"skipped\":1",
+    "\"event\":\"run_end\",\"passed\":2,\"failed\":5,\"todo\":2,\"skipped\":1",
   )
 }
 
@@ -89,14 +89,57 @@ pub fn playground_parallel_e2e_test() {
   assert code == 1
   assert string.contains(
     out,
-    "\"event\":\"run_end\",\"passed\":2,\"failed\":4,\"todo\":2,\"skipped\":1",
+    "\"event\":\"run_end\",\"passed\":3,\"failed\":4,\"todo\":2,\"skipped\":1",
   )
   assert string.contains(out, "\"site_function\":\"rate_limit\"")
 }
 
 @target(erlang)
+/// background_job_test passes while the unlinked worker it starts crashes.
+/// The BEAM's crash report for that death must stay out of a default run
+/// entirely, and come back — after the summary — with --show-crash-reports.
+/// stderr is merged into the captured stream here because that is where
+/// the reports go; the stdout-only harness above proves they never reach
+/// stdout.
+pub fn playground_crash_reports_e2e_test() {
+  let assert Ok(#(_, quiet)) =
+    run_command_merged(
+      "gleam",
+      ["test", "--", "--color=never"],
+      "examples/playground",
+    )
+  assert string.contains(quiet, "ok    playground_test.background_job_test")
+  assert !string.contains(quiet, "background job crashed")
+  assert !string.contains(quiet, "Error in process")
+
+  let assert Ok(#(_, shown)) =
+    run_command_merged(
+      "gleam",
+      ["test", "--", "--color=never", "--show-crash-reports"],
+      "examples/playground",
+    )
+  assert string.contains(
+    shown,
+    "vouch: 1 crash report captured during the run:",
+  )
+  assert string.contains(shown, "background job crashed: queue is full")
+  // After the summary, not interleaved with the results.
+  let assert Ok(#(_, after_summary)) =
+    string.split_once(shown, "3 passed, 4 failed, 2 todo, 1 skipped")
+  assert string.contains(after_summary, "background job crashed: queue is full")
+}
+
+@target(erlang)
 @external(erlang, "vouch_e2e_ffi", "run_command")
 fn run_command(
+  command: String,
+  args: List(String),
+  directory: String,
+) -> Result(#(Int, String), Nil)
+
+@target(erlang)
+@external(erlang, "vouch_e2e_ffi", "run_command_merged")
+fn run_command_merged(
   command: String,
   args: List(String),
   directory: String,

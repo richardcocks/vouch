@@ -17,6 +17,18 @@ pub fn rate_limit(_requests: Int) -> Bool {
 @external(javascript, "./playground_ffi.mjs", "sleep")
 pub fn sleep(ms: Int) -> Nil
 
+/// A fire-and-forget worker with a bug: the caller gets Nil back and
+/// carries on, while the unlinked process it started dies. The test that
+/// calls this passes — the crash is only visible through the BEAM's crash
+/// report, which vouch swallows unless `--show-crash-reports` is given.
+pub fn start_background_job() -> Nil {
+  spawn(fn() { panic as "background job crashed: queue is full" })
+}
+
+@external(erlang, "playground_ffi", "spawn")
+@external(javascript, "./playground_ffi.mjs", "spawn")
+fn spawn(job: fn() -> Nil) -> Nil
+
 /// Stands in for a dependency whose .beam has gone stale or missing: no
 /// config_parser module exists, so on the BEAM the call raises undef and
 /// the report names config_parser:parse/1 from the stacktrace. On

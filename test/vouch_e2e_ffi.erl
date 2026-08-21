@@ -1,10 +1,18 @@
 %% Test-only helper: run a command in a directory, capturing stdout and the
-%% exit code. stderr is deliberately not captured — the e2e tests assert
-%% that stdout alone is a clean stream.
+%% exit code. stderr is deliberately not captured by run_command/3 — the
+%% e2e tests assert that stdout alone is a clean stream. run_command_merged/3
+%% folds stderr into the same stream, for the one case that asserts on what
+%% vouch prints to stderr (captured crash reports).
 -module(vouch_e2e_ffi).
--export([run_command/3]).
+-export([run_command/3, run_command_merged/3]).
 
 run_command(Command, Args, Dir) ->
+    run(Command, Args, Dir, []).
+
+run_command_merged(Command, Args, Dir) ->
+    run(Command, Args, Dir, [stderr_to_stdout]).
+
+run(Command, Args, Dir, Extra) ->
     case os:find_executable(unicode:characters_to_list(Command)) of
         false ->
             {error, nil};
@@ -16,6 +24,7 @@ run_command(Command, Args, Dir) ->
                 eof,
                 binary,
                 hide
+                | Extra
             ]),
             collect(Port, [], undefined, false)
     end.
