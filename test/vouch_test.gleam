@@ -274,9 +274,10 @@ pub fn describe_crash_site_location_test() {
       arity: 1,
       location: Some(#("src/filepath.erl", 145)),
     )
-  assert describe.failure(
-      outcome.UnknownDetail(dynamic.string("boom"), Some(site)),
-    )
+  assert describe.failure(outcome.UnknownDetail(
+      dynamic.string("boom"),
+      Some(site),
+    ))
     == [
       "Crashed: \"boom\" calling filepath:split/1",
       "  at src/filepath.erl:145",

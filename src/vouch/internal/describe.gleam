@@ -71,8 +71,9 @@ pub fn crash(raw: Dynamic, site: Option(CrashSite)) -> String {
 /// frame never does, the called function not existing anywhere.
 fn at_line(site: Option(CrashSite)) -> List(String) {
   case site {
-    option.Some(outcome.CrashSite(location: option.Some(#(file, line)), ..)) ->
-      ["  at " <> file <> ":" <> int.to_string(line)]
+    option.Some(outcome.CrashSite(location: option.Some(#(file, line)), ..)) -> [
+      "  at " <> file <> ":" <> int.to_string(line),
+    ]
     _ -> []
   }
 }
