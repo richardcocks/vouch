@@ -4,11 +4,15 @@
     exported_zero_arity/1,
     run_test/3,
     catch_panic/1,
+    split_crash/1,
     decode_panic/1,
     now_microseconds/0,
     is_stdout_tty/0,
     env/1,
-    redirect_diagnostics_to_stderr/0,
+    capture_diagnostics/0,
+    drain_diagnostics/0,
+    take_diagnostics_matching/1,
+    log/2,
     write_file/2,
     read_source/3,
     halt/1,
@@ -71,14 +75,109 @@ env(Name) ->
         Value -> {ok, unicode:characters_to_binary(Value)}
     end.
 
-%% Route BEAM diagnostics (e.g. crash reports from processes that tests
-%% spawned) to stderr, so stdout stays a clean stream for reporters. They
-%% remain visible in a terminal; they no longer corrupt piped output.
+%% Swallow BEAM diagnostics (crash reports from processes that tests
+%% spawned, anything else routed through OTP's logger) instead of letting
+%% the default handler print them around the test output. A process that
+%% dies under a test is already reported through the test's own outcome;
+%% the BEAM's report of the same death is a duplicate. This module doubles
+%% as the logger handler: log/2 renders each event with the formatter the
+%% default handler would have used and stashes the text in a public ETS
+%% table. The runner drains and prints that table after the summary only
+%% when asked (--show-crash-reports); otherwise it is never read, except by
+%% vouch's own suite proving the reports were captured. If the capture
+%% handler cannot be installed, fall back to redirecting the default
+%% handler to stderr: reports on stderr beat reports corrupting a
+%% machine-read stdout stream.
+capture_diagnostics() ->
+    catch case logger:get_handler_config(vouch_diagnostics) of
+        {ok, _} ->
+            %% Already capturing; installing twice would double reports.
+            ok;
+        _ ->
+            case logger:get_handler_config(default) of
+                {ok, #{filters := Filters, formatter := Formatter}} ->
+                    ensure_diagnostics_table(),
+                    %% Added before the default handler is removed, so no
+                    %% window exists where an event is dropped entirely.
+                    case logger:add_handler(vouch_diagnostics, ?MODULE,
+                            #{filters => Filters, formatter => Formatter}) of
+                        ok -> logger:remove_handler(default);
+                        _ -> redirect_default_to_stderr()
+                    end;
+                _ ->
+                    %% No default handler: nothing would have printed, so
+                    %% there is nothing to capture.
+                    ok
+            end
+    end,
+    nil.
+
+ensure_diagnostics_table() ->
+    case ets:whereis(vouch_diagnostics) of
+        undefined ->
+            %% Owned by the runner process, which lives until halt.
+            ets:new(vouch_diagnostics, [named_table, public, ordered_set]);
+        _ ->
+            ok
+    end.
+
+%% Logger handler callback, installed by capture_diagnostics/0. Runs in the
+%% logging process for logger API calls and in the logger server for
+%% emulator-generated reports; either way, render now and append. Must
+%% never raise: logger removes a handler whose callback crashes.
+log(Event, Config) ->
+    catch ets:insert(vouch_diagnostics,
+        {erlang:unique_integer([monotonic]), render_diagnostic(Event, Config)}),
+    ok.
+
+render_diagnostic(Event, Config) ->
+    try
+        {FModule, FConfig} = maps:get(formatter, Config),
+        Text = unicode:characters_to_binary(FModule:format(Event, FConfig)),
+        true = is_binary(Text),
+        Text
+    catch
+        _:_ ->
+            unicode:characters_to_binary(io_lib:format("~0tp~n", [Event]))
+    end.
+
+%% All captured diagnostics in arrival order, removed from the table. Only
+%% the returned rows are deleted, so an event arriving mid-drain is kept
+%% rather than silently discarded.
+drain_diagnostics() ->
+    take_diagnostics(fun(_Text) -> true end).
+
+%% Remove and return only the captured diagnostics whose text contains
+%% Marker, leaving the rest alone. The suite-facing probe: a spec that
+%% deliberately crashes a process can assert its report was captured
+%% without touching reports that belong to other tests.
+take_diagnostics_matching(Marker) ->
+    take_diagnostics(fun(Text) ->
+        binary:match(Text, Marker) =/= nomatch
+    end).
+
+%% Emulator-generated reports travel through the logger server's mailbox
+%% (API-call events are handled in the logging process itself, before the
+%% crash propagates), so a synchronous round-trip first makes sure
+%% everything already sent is in the table before it is read.
+take_diagnostics(Keep) ->
+    catch sys:get_state(logger, 1000),
+    case catch ets:tab2list(vouch_diagnostics) of
+        Rows when is_list(Rows) ->
+            [begin
+                 catch ets:delete(vouch_diagnostics, Key),
+                 Text
+             end || {Key, Text} <- Rows, Keep(Text)];
+        _ ->
+            []
+    end.
+
+%% Fallback when the capture handler cannot be installed: route the default
+%% handler to stderr, so stdout stays a clean stream for reporters.
 %% logger_std_h does not honour a runtime `type` change, so the handler is
-%% removed and re-added with its filters and formatter preserved. Note the
-%% reports are asynchronous and can be lost entirely if the VM halts first.
-redirect_diagnostics_to_stderr() ->
-    catch case logger:get_handler_config(default) of
+%% removed and re-added with its filters and formatter preserved.
+redirect_default_to_stderr() ->
+    case logger:get_handler_config(default) of
         {ok, #{module := Module, config := HConfig} = Cfg} ->
             NewCfg0 = Cfg#{config := HConfig#{type => standard_error}},
             NewCfg = maps:remove(id, maps:remove(module, NewCfg0)),
@@ -95,8 +194,7 @@ redirect_diagnostics_to_stderr() ->
             end;
         _ ->
             ok
-    end,
-    nil.
+    end.
 
 %% Paths of .gleam files under test/, relative to test/.
 find_test_files() ->
@@ -178,17 +276,55 @@ await_test({Ref, MonRef}) ->
 schedulers_online() ->
     erlang:system_info(schedulers_online).
 
-%% Call a function, capturing anything it throws. The raw reason is returned
-%% for Gleam-side decoding; a Gleam panic's reason is a map tagged
-%% gleam_error.
+%% Call a function, capturing anything it throws. The reason is paired with
+%% the stacktrace — for a non-Gleam crash (undef from a stale .beam, an FFI
+%% error) the top frame is the only thing that names what failed, and
+%% split_crash/1 reduces it to a site during classification. Gleam-side
+%% decoding is unaffected: a Gleam panic's reason is a map tagged
+%% gleam_error, which find_panic's recursive search still reaches inside the
+%% extra tuple. The {Reason, Stacktrace} shape deliberately matches BEAM
+%% exit reasons, so both feed the same split.
 catch_panic(F) ->
     try
         F(),
         {ok, nil}
     catch
-        error:Reason -> {error, Reason};
-        Class:Reason -> {error, {Class, Reason}}
+        error:Reason:Stacktrace -> {error, {Reason, Stacktrace}};
+        Class:Reason:Stacktrace -> {error, {{Class, Reason}, Stacktrace}}
     end.
+
+%% Split a raw caught term into the error reason and the crash site from the
+%% top of its stacktrace. Fed by catch_panic's {Reason, Stacktrace} capture
+%% and by exit reasons, which the BEAM already shapes the same way. A frame
+%% carries the argument list instead of an arity when the arguments are
+%% known — an undef frame always does. Tuple shapes must match the
+%% CrashSite constructor in src/vouch/internal/outcome.gleam. Anything
+%% unrecognised passes through untouched with no site.
+split_crash({Reason, [{Module, Function, ArityOrArgs, Info} | _]})
+    when is_atom(Module), is_atom(Function),
+         is_list(ArityOrArgs) orelse is_integer(ArityOrArgs) ->
+    Arity = case ArityOrArgs of
+        Args when is_list(Args) -> length(Args);
+        A -> A
+    end,
+    Site = {crash_site,
+        atom_to_binary(Module, utf8),
+        atom_to_binary(Function, utf8),
+        Arity,
+        frame_location(Info)},
+    {Reason, {some, Site}};
+split_crash(Raw) ->
+    {Raw, none}.
+
+frame_location(Info) when is_list(Info) ->
+    case {lists:keyfind(file, 1, Info), lists:keyfind(line, 1, Info)} of
+        {{file, File}, {line, Line}} when is_integer(Line) ->
+            {some, {unicode:characters_to_binary(File), Line}};
+        _ ->
+            none
+    end;
+frame_location(_) ->
+    none.
 
 %% Decode a raw error term into vouch's GleamPanic type, or error for
 %% anything that is not a Gleam panic. The panic map is searched for

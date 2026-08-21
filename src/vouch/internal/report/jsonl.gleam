@@ -3,6 +3,7 @@
 
 import gleam/io
 import gleam/list
+import gleam/option.{type Option}
 import gleam/string
 import vouch/internal/event.{type Event}
 import vouch/internal/gleam_panic.{type GleamPanic}
@@ -79,18 +80,39 @@ fn outcome_fields(out: TestOutcome) -> List(#(String, json.Value)) {
         #("line", Num(p.line)),
       ]
       |> list.append(kind_fields(p))
-    outcome.Failed(outcome.UnknownDetail(raw)) -> [
-      #("kind", Str("unknown")),
-      #("message", Str(string.inspect(raw))),
-    ]
+    outcome.Failed(outcome.UnknownDetail(raw, site)) ->
+      [#("kind", Str("unknown")), #("message", Str(string.inspect(raw)))]
+      |> list.append(site_fields(site))
     outcome.Failed(outcome.TimeoutDetail(ms)) -> [
       #("kind", Str("timeout")),
       #("timeout_ms", Num(ms)),
     ]
-    outcome.Failed(outcome.ExitDetail(raw)) -> [
-      #("kind", Str("died")),
-      #("message", Str(string.inspect(raw))),
-    ]
+    outcome.Failed(outcome.ExitDetail(raw, site)) ->
+      [#("kind", Str("died")), #("message", Str(string.inspect(raw)))]
+      |> list.append(site_fields(site))
+  }
+}
+
+/// A crash site as structured fields, following the site_* naming the todo
+/// outcome uses. File and line appear only when the frame carried them.
+fn site_fields(site: Option(outcome.CrashSite)) -> List(#(String, json.Value)) {
+  case site {
+    option.None -> []
+    option.Some(s) -> {
+      let named = [
+        #("site_module", Str(s.module)),
+        #("site_function", Str(s.function)),
+        #("site_arity", Num(s.arity)),
+      ]
+      case s.location {
+        option.None -> named
+        option.Some(#(file, line)) ->
+          list.append(named, [
+            #("site_file", Str(file)),
+            #("site_line", Num(line)),
+          ])
+      }
+    }
   }
 }
 

@@ -52,6 +52,7 @@ gleam test -- --format=teamcity
 gleam test -- --junit=report.xml
 gleam test -- --timeout=1000            # Erlang target only
 gleam test -- --parallel                # Erlang target only
+gleam test -- --show-crash-reports      # Erlang target only, see below
 gleam test -- --color=never             # console colour: auto | always | never
 gleam run -m vouch -- watch             # rerun the suite on file change
 ```
@@ -87,9 +88,14 @@ On Deno, watch mode also needs `allow_run = ["gleam"]` to spawn the inner runs (
 | todo | hit `todo` in code under test | 1 — unimplemented is still not done |
 | skip | `todo` within test function | 0 |
 
+## Crash reports
+
+To keep the output of vouch clean, vouch catches and suppresses any errors coming out of dying OTP processes. 
+If you need to inspect these crash reports, there is the option `--show-crash-reports`. These will be printed to stderr after the summary.
+
 ## Target differences
 
-Erlang target supports `--parallel` and `--timeout=n`
+Erlang target supports `--parallel`, `--timeout=n` and `--show-crash-reports`
 
 Deno needs permissions in your project's `gleam.toml`.
 You need `allow_read` for discovery and source quoting.
