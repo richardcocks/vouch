@@ -4,6 +4,7 @@
     exported_zero_arity/1,
     run_test/3,
     catch_panic/1,
+    split_crash/1,
     decode_panic/1,
     now_microseconds/0,
     is_stdout_tty/0,
@@ -178,17 +179,55 @@ await_test({Ref, MonRef}) ->
 schedulers_online() ->
     erlang:system_info(schedulers_online).
 
-%% Call a function, capturing anything it throws. The raw reason is returned
-%% for Gleam-side decoding; a Gleam panic's reason is a map tagged
-%% gleam_error.
+%% Call a function, capturing anything it throws. The reason is paired with
+%% the stacktrace — for a non-Gleam crash (undef from a stale .beam, an FFI
+%% error) the top frame is the only thing that names what failed, and
+%% split_crash/1 reduces it to a site during classification. Gleam-side
+%% decoding is unaffected: a Gleam panic's reason is a map tagged
+%% gleam_error, which find_panic's recursive search still reaches inside the
+%% extra tuple. The {Reason, Stacktrace} shape deliberately matches BEAM
+%% exit reasons, so both feed the same split.
 catch_panic(F) ->
     try
         F(),
         {ok, nil}
     catch
-        error:Reason -> {error, Reason};
-        Class:Reason -> {error, {Class, Reason}}
+        error:Reason:Stacktrace -> {error, {Reason, Stacktrace}};
+        Class:Reason:Stacktrace -> {error, {{Class, Reason}, Stacktrace}}
     end.
+
+%% Split a raw caught term into the error reason and the crash site from the
+%% top of its stacktrace. Fed by catch_panic's {Reason, Stacktrace} capture
+%% and by exit reasons, which the BEAM already shapes the same way. A frame
+%% carries the argument list instead of an arity when the arguments are
+%% known — an undef frame always does. Tuple shapes must match the
+%% CrashSite constructor in src/vouch/internal/outcome.gleam. Anything
+%% unrecognised passes through untouched with no site.
+split_crash({Reason, [{Module, Function, ArityOrArgs, Info} | _]})
+    when is_atom(Module), is_atom(Function),
+         is_list(ArityOrArgs) orelse is_integer(ArityOrArgs) ->
+    Arity = case ArityOrArgs of
+        Args when is_list(Args) -> length(Args);
+        A -> A
+    end,
+    Site = {crash_site,
+        atom_to_binary(Module, utf8),
+        atom_to_binary(Function, utf8),
+        Arity,
+        frame_location(Info)},
+    {Reason, {some, Site}};
+split_crash(Raw) ->
+    {Raw, none}.
+
+frame_location(Info) when is_list(Info) ->
+    case {lists:keyfind(file, 1, Info), lists:keyfind(line, 1, Info)} of
+        {{file, File}, {line, Line}} when is_integer(Line) ->
+            {some, {unicode:characters_to_binary(File), Line}};
+        _ ->
+            none
+    end;
+frame_location(_) ->
+    none.
 
 %% Decode a raw error term into vouch's GleamPanic type, or error for
 %% anything that is not a Gleam panic. The panic map is searched for

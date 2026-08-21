@@ -8,6 +8,7 @@ import { spawnSync } from "node:child_process";
 import { Worker } from "node:worker_threads";
 import { isatty } from "node:tty";
 import { Result$Ok, Result$Error, List$Empty, List$NonEmpty } from "./gleam.mjs";
+import { Option$None } from "../gleam_stdlib/gleam/option.mjs";
 import {
   GleamPanic$GleamPanic,
   PanicKind$Todo,
@@ -363,6 +364,13 @@ export function catch_panic(f) {
   } catch (error) {
     return Result$Error(error);
   }
+}
+
+// The Erlang side splits {Reason, Stacktrace} into the reason and a crash
+// site taken from the top frame. A JavaScript throw only carries an unparsed
+// stack string, so there is never a site here and the term passes through.
+export function split_crash(raw) {
+  return [raw, Option$None()];
 }
 
 // Decode a thrown value into vouch's GleamPanic type, or error for anything

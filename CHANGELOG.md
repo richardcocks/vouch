@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+Crash reports now name what was being called. A test that dies with a
+non-Gleam error (an undef from a stale or missing .beam, an FFI crash)
+previously reported only the bare reason — "Crashed: Undef" — with the
+failing call discarded. The stacktrace's top frame is now carried into the
+report on the Erlang target:
+
+    Crashed: Undef calling config_parser:parse/1
+
+with an `at file:line` line when the frame carries one. The same site
+reaches the TeamCity and JUnit failure messages, and the JSONL stream as
+structured `site_module` / `site_function` / `site_arity` (plus
+`site_file` / `site_line` when known) fields. JavaScript crashes are
+unchanged: a JS stacktrace is an unparsed string, so there is no site to
+extract.
+
 ## v1.2.0
 
 Watch mode added for the JavaScript target, supporting both Node and Deno

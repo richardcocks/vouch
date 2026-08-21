@@ -5,3 +5,9 @@ export function sleep(ms) {
     // spin
   }
 }
+
+// The JavaScript half of parse_config: a raw runtime error, standing in for
+// a broken FFI dependency. On Erlang the module itself is missing instead.
+export function parse(path) {
+  throw new TypeError(`config_parser is not loaded (parsing ${path})`);
+}

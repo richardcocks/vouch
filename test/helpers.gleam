@@ -66,6 +66,22 @@ pub fn crashes_linked() -> Nil {
   sleep(1000)
 }
 
+/// Stands in for a call into a stale or missing .beam: the module does not
+/// exist, so the call raises undef — no Gleam payload, only a stacktrace
+/// whose top frame names the M:F/A that was called.
+@target(erlang)
+@external(erlang, "vouch_no_such_module", "boom")
+pub fn calls_missing_function() -> Nil
+
+/// The same undef, but in a linked process: the test process is killed by
+/// the exit signal, whose reason still carries the stacktrace.
+@target(erlang)
+pub fn crashes_linked_undef() -> Nil {
+  spawn_link(fn() { calls_missing_function() })
+  // Stay alive long enough to receive the exit signal.
+  sleep(1000)
+}
+
 @target(erlang)
 @external(erlang, "timer", "sleep")
 fn sleep(ms: Int) -> Nil

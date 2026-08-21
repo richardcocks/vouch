@@ -1,6 +1,6 @@
 //// One test per outcome flavour, so a plain run shows vouch's full range:
 ////
-////   gleam test                        - 2 pass, 3 fail, 2 todo, 1 skip
+////   gleam test                        - 2 pass, 4 fail, 2 todo, 1 skip
 ////   gleam test -- --timeout=100       - slow_test also fails as a timeout
 ////   gleam test -- --filter=slow       - just the slow test
 ////   gleam test -- --format=json       - the same as a JSONL stream
@@ -33,6 +33,14 @@ pub fn failing_assert_test() {
 pub fn failing_predicate_test() {
   let spend = 250
   assert playground.within_budget(spend)
+}
+
+/// A crash that is not a Gleam panic: the code under test calls into a
+/// missing module — the stale-.beam problem. The report names what was
+/// being called ("Crashed: Undef calling config_parser:parse/1") instead of
+/// an information-free "Crashed: Undef".
+pub fn crashing_config_test() {
+  playground.parse_config("gleam.toml")
 }
 
 /// A failing pattern match: renders the unmatched value.
