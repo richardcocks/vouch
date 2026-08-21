@@ -23,19 +23,32 @@ fidelity for ordinary failures. The runner waits on three possibilities:
   killed and reported as a timeout failure. A hung test costs its timeout,
   not the whole run.
 
-BEAM crash reports (a process the test started dying: the emulator's "Error
-in process", proc_lib crash reports, gen_\* terminate and supervisor child
-reports) are diverted at run start from the default logger handler into an
-ETS table, by a capture handler whose filter admits only crash-shaped events.
-Each test process runs under its own group leader — a proxy forwarding io to
-the real one — which every process it starts inherits and every crash report
-records, so after each test the runner claims the reports charged to it and
-folds them into the outcome: a passing test whose worker crashed fails
-(`BackgroundCrashDetail`), or is a todo if the worker died of a `todo`.
-Reports nobody claimed (arrived after their test finished, or from outside
-any test) are printed at the end and fail the run. The default handler is
-re-added with `type: standard_error` for everything else routed through
-logger, so it stays visible but can never corrupt piped stdout.
+A process that dies *behind* a test — an unlinked worker, a fire-and-forget
+job nothing is linked to or monitoring — would leave the test passing, its
+death known only to the BEAM's crash report. vouch traces each test's
+process tree: `erlang:trace(TestPid, true, [procs, set_on_spawn, {tracer,
+Collector}])` gives every process the test starts, transitively, a per-test
+collector that receives a trace message for each abnormal exit. This is the
+pass/fail signal, and it is race-free where the crash report is not: a trace
+exit is delivered before the test can report its result, and
+`erlang:trace_delivered/1` flushes any still in transit before the collector
+is read. After each test the runner folds the collected crash reasons into
+the outcome — a passing test whose worker crashed fails
+(`BackgroundCrashDetail`), or is a todo if the worker died of a `todo`, the
+test's own failure winning a tie. A crash a collector sees after its test
+was claimed (a worker outliving its test) is recorded as unattributed;
+those are reported at the end and fail the run. Nesting — vouch's own suite
+runs tests that run tests — is handled by clearing the inherited trace
+before setting each test's own, since a process may have only one tracer.
+
+The BEAM's own crash reports (the emulator's "Error in process", proc_lib
+crash reports, gen_\* terminate and supervisor child reports) are separately
+diverted from the default logger handler into an ETS table by a capture
+handler whose filter admits only crash-shaped events, purely to keep them
+off the output streams and hand their raw text to `--show-crash-reports`;
+they no longer drive any outcome. The default handler is re-added with
+`type: standard_error` for everything else routed through logger, so it
+stays visible but can never corrupt piped stdout.
 (`logger:update_handler_config` silently ignores a runtime type change;
 remove-and-re-add is required.)
 

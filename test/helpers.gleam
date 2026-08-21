@@ -105,11 +105,12 @@ pub fn undef_in_background() -> Nil {
 }
 
 @target(erlang)
-/// A worker that dies only after the caller has returned: its crash report
-/// can never be claimed by the test that started it.
-pub fn crashes_after_returning() -> Nil {
+/// A fire-and-forget worker that is still alive when the caller returns and
+/// crashes shortly after: its death can never be charged to the test that
+/// started it, so the runner's tracer records it as unattributed.
+pub fn returns_before_worker_crashes() -> Nil {
   spawn(fn() {
-    sleep(50)
+    sleep(30)
     panic as "late crash in background process"
   })
 }

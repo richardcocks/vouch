@@ -93,9 +93,9 @@ On Deno, watch mode also needs `allow_run = ["gleam"]` to spawn the inner runs (
 On the Erlang target, a process that dies *with* a test (a linked process crashing, an actor
 the test is calling hitting a `todo`) is reported through the test's own outcome. A process
 that dies *behind* a test — an unlinked worker, a fire-and-forget job nothing is monitoring —
-would leave the test passing, with the BEAM's crash report as the only trace. vouch captures
-those reports and charges each to the test whose process died (every process a test starts
-inherits its group leader, which the report records), so the test fails:
+would leave the test passing (this is what gleeunit does), with the BEAM's crash report as the
+only trace. vouch traces each test's process tree, so a process it started that crashes is
+caught and charged to that test, and the test fails:
 
 ```
   playground_test.background_job_test
@@ -103,11 +103,11 @@ inherits its group leader, which the report records), so the test fails:
       background job crashed: queue is full
 ```
 
-If the process died of a `todo`, the test is a todo instead. A report that arrives after its
-test has finished, or from a process no test started, is printed on stderr at the end and fails
-the run. Other logger output (a library's warnings) is not a crash; it goes to stderr as
-before. Pass `--show-crash-reports` to also get the full BEAM reports, printed as one block on
-stderr after the summary.
+If the process died of a `todo`, the test is a todo instead. A crash from a process that
+outlived its test, or that no test started, is reported at the end and fails the run. The
+BEAM's own crash reports are kept off the output streams (they used to interleave with it on
+stderr); pass `--show-crash-reports` to print them in full as one block after the summary.
+Other logger output (a library's warnings) is not a crash and still goes to stderr.
 
 ## Target differences
 

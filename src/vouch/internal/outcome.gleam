@@ -50,12 +50,12 @@ pub type FailureDetail {
   BackgroundCrashDetail(cause: FailureDetail)
 }
 
-/// The BEAM's report of a process dying while a test ran, as captured by
-/// the runner's logger handler: the exit reason the report carried (a
-/// Gleam panic map for a panic, assert or todo; a raw term otherwise) and
-/// the report text as the default handler would have printed it.
+/// A process that crashed while a test ran, as seen by the runner's tracer:
+/// the exit reason of the dead process (a Gleam panic map for a panic,
+/// assert or todo; a raw `{Reason, Stacktrace}` otherwise), which decodes
+/// exactly like a caught panic.
 pub type CrashReport {
-  CrashReport(reason: Dynamic, text: String)
+  CrashReport(reason: Dynamic)
 }
 
 /// The top frame of the stacktrace behind a non-Gleam crash: what was being

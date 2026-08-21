@@ -141,12 +141,11 @@ pub fn linked_crash_is_contained_test() {
   let assert outcome.Failed(outcome.PanicDetail(p)) =
     outcome.classify("vouch_test", "linked_crash_is_contained_test", invocation)
   assert p.message == "crash in linked process"
-  // The linked process's death also reaches the emulator, which logs an
-  // "Error in process" report. It is captured and charged to the test that
-  // ran the process (never printed), and the test's own failure wins.
-  let assert [outcome.CrashReport(text:, ..)] = reports
-  assert string.contains(text, "Error in process")
-  assert string.contains(text, "crash in linked process")
+  // The linked process is a traced descendant, so its crash is also
+  // collected as a background report — but the test's own death (the same
+  // panic, propagated by the link) is the more specific outcome, so the
+  // fold keeps the PanicDetail rather than a BackgroundCrashDetail.
+  let assert [outcome.CrashReport(_)] = reports
   assert outcome.with_crash_reports(
       outcome.classify(
         "vouch_test",
@@ -215,29 +214,29 @@ pub fn background_undef_names_call_site_test() {
 }
 
 @target(erlang)
-/// A worker that outlives its test: the report arrives after the test's
-/// result and cannot be charged to it. The runner's end-of-run sweep picks
-/// it up instead, naming the test from the group leader it inherited.
-/// Consumed here so the sweep in this very run stays clean.
-pub fn late_background_crash_is_unattributed_test() {
+/// A worker that outlives its test: still alive when the test's result is
+/// claimed (so no report is charged to the test), then crashes. The runner's
+/// tracer records the late death as unattributed, which fails the run. It is
+/// consumed here — after polling for it to arrive — so this suite run does
+/// not itself fail on it.
+pub fn late_background_crash_becomes_unattributed_test() {
   let #(invocation, reports) =
-    runner.run_in_process("helpers", "crashes_after_returning", 5000)
+    runner.run_in_process("helpers", "returns_before_worker_crashes", 5000)
   assert invocation == outcome.Passed
   assert reports == []
-  let assert [report] =
-    await_diagnostics("late crash in background process", 40)
-  assert string.contains(report, "Error in process")
+  let assert [text] = await_unattributed("late crash in background process", 80)
+  assert string.contains(text, "late crash in background process")
 }
 
 @target(erlang)
-/// Captured reports matching `marker`, polling while an emulator report may
-/// still be in flight. Taking only the matching reports leaves any other
-/// test's reports alone, so this cannot race a parallel run.
-fn await_diagnostics(marker: String, retries: Int) -> List(String) {
-  case runner.take_diagnostics_matching(marker) {
+/// The unattributed crash reports containing `marker`, consumed, polling
+/// while the late crash may still be pending. Consuming only the matching
+/// rows leaves any other test's unattributed reports alone.
+fn await_unattributed(marker: String, retries: Int) -> List(String) {
+  case runner.take_unattributed_matching(marker) {
     [] if retries > 0 -> {
       sleep_ms(25)
-      await_diagnostics(marker, retries - 1)
+      await_unattributed(marker, retries - 1)
     }
     reports -> reports
   }
@@ -250,9 +249,11 @@ fn sleep_ms(ms: Int) -> Nil
 @target(erlang)
 /// A todo inside an OTP process (here a real gen_server callback) reaches
 /// the caller wrapped in OTP exit structure. It must still classify as
-/// Todo, not an opaque failure.
+/// Todo, not an opaque failure. Run in its own process so the gen_server's
+/// death is that inner run's business, not this test's.
 pub fn otp_wrapped_todo_is_todo_outcome_test() {
-  let invocation = outcome.from_caught(runner.catch_panic(call_into_todo))
+  let #(invocation, _reports) =
+    runner.run_in_process("vouch_otp_fixture", "call_into_todo", 5000)
   let assert outcome.Todo(p) =
     outcome.classify(
       "vouch_test",
@@ -261,17 +262,7 @@ pub fn otp_wrapped_todo_is_todo_outcome_test() {
     )
   assert p.module == "helpers"
   assert p.function == "unimplemented"
-  // gen_server logs its terminating report (and proc_lib its crash report)
-  // on the way down, synchronously, before the call returns. Both are
-  // captured, never printed — and consumed here, because the server ran in
-  // this test's own process tree and would otherwise be charged to it.
-  let reports = runner.take_diagnostics_matching("vouch_otp_fixture")
-  assert reports != []
 }
-
-@target(erlang)
-@external(erlang, "vouch_otp_fixture", "call_into_todo")
-fn call_into_todo() -> Nil
 
 @target(erlang)
 pub fn isolated_pass_and_panic_test() {
@@ -365,10 +356,10 @@ pub fn linked_undef_crash_names_call_site_test() {
   assert site.module == "vouch_no_such_module"
   assert site.function == "boom"
   assert site.arity == 0
-  // The linked process's undef also produces an emulator report, captured
-  // and charged to the test rather than printed.
-  let assert [outcome.CrashReport(text:, ..)] = reports
-  assert string.contains(text, "vouch_no_such_module")
+  // The linked process is a traced descendant, so its undef is also
+  // collected as a background report; the decode is covered by
+  // background_undef_names_call_site_test.
+  let assert [outcome.CrashReport(_)] = reports
 }
 
 @target(erlang)
@@ -1102,7 +1093,7 @@ fn background_panic() -> gleam_panic.GleamPanic {
 /// The more severe verdict wins, the test's own on a tie: a report never
 /// downgrades a failure, and a passing test takes the report's verdict.
 pub fn with_crash_reports_severity_test() {
-  let raw = outcome.CrashReport(reason: dynamic.string("boom"), text: "t")
+  let raw = outcome.CrashReport(reason: dynamic.string("boom"))
   let own = outcome.Failed(outcome.TimeoutDetail(100))
   assert outcome.with_crash_reports(own, "m", "t", [raw]) == own
   assert outcome.with_crash_reports(outcome.Pass, "m", "t", []) == outcome.Pass

@@ -350,6 +350,14 @@ fn unattributed_crash_reports() -> List(#(String, Option(#(String, String))))
 @external(javascript, "../../vouch_ffi.mjs", "take_diagnostics_matching")
 pub fn take_diagnostics_matching(marker: String) -> List(String)
 
+/// Remove and return the rendered reasons of unattributed crashes (a worker
+/// that outlived its test) whose text contains `marker`. Public so vouch's
+/// own suite can prove the late-crash path reaches the unattributed table,
+/// consuming its deliberately-caused entry so the suite run stays green.
+@external(erlang, "vouch_ffi", "take_unattributed_matching")
+@external(javascript, "../../vouch_ffi.mjs", "take_unattributed_matching")
+pub fn take_unattributed_matching(marker: String) -> List(String)
+
 fn path_to_module(path: String) -> String {
   path
   |> string.replace("\\", "/")

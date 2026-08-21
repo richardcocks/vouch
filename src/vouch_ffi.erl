@@ -13,9 +13,10 @@
     all_diagnostics/0,
     unattributed_diagnostics/0,
     take_diagnostics_matching/1,
+    take_unattributed_matching/1,
     crash_filter/2,
     log/2,
-    forward_io/1,
+    collect_crashes/3,
     write_file/2,
     read_source/3,
     halt/1,
@@ -78,24 +79,22 @@ env(Name) ->
         Value -> {ok, unicode:characters_to_binary(Value)}
     end.
 
-%% BEAM crash reports — a process dying with an uncaught error (the
-%% emulator's "Error in process"), a proc_lib CRASH REPORT, a gen_*
-%% "terminating" report, a supervisor's child-died report — are diverted
-%% away from the default logger handler into a public ETS table. The runner
-%% reads that table after each test and charges each report to the test
-%% whose process died (see the per-test group leaders in run_test/3), so a
-%% worker that crashes behind an otherwise passing test still turns the
-%% test red; the raw report text is printed only on request
-%% (--show-crash-reports). Everything else routed through logger (a
-%% library's warnings, a test's own log lines) is not a crash and still
-%% prints, via the default handler moved to stderr so it cannot corrupt a
-%% machine-read stdout stream.
+%% Pass/fail for a process that dies behind a test is driven by tracing (see
+%% run_test/3), not by these logger reports. The logger capture exists only
+%% to keep BEAM crash reports (the emulator's "Error in process", proc_lib
+%% CRASH REPORTs, gen_* terminate and supervisor child reports) off the
+%% output streams and hand them to --show-crash-reports: a report is a raw
+%% render of a death the trace already accounted for, wanted in full only on
+%% request. Everything else routed through logger (a library's warnings, a
+%% test's own log lines) is not a crash and still prints, via the default
+%% handler moved to stderr so it cannot corrupt a machine-read stdout stream.
 %%
 %% This module doubles as the capture handler: crash_filter/2 selects the
 %% events and log/2 stores each one rendered with the default handler's own
 %% formatter. If the capture handler cannot be installed, reports stay on
 %% stderr — still better than corrupting stdout.
 capture_diagnostics() ->
+    ensure_diagnostics_tables(),
     catch case logger:get_handler_config(vouch_diagnostics) of
         {ok, _} ->
             %% Already capturing; installing twice would double reports.
@@ -103,7 +102,6 @@ capture_diagnostics() ->
         _ ->
             case logger:get_handler_config(default) of
                 {ok, #{formatter := Formatter}} ->
-                    ensure_diagnostics_table(),
                     Capture = logger:add_handler(vouch_diagnostics, ?MODULE, #{
                         formatter => Formatter,
                         filter_default => stop,
@@ -129,15 +127,17 @@ capture_diagnostics() ->
     end,
     nil.
 
-%% Rows are {Key, GroupLeader, Text, Reason, Claimed} for captured reports
-%% (Key from unique_integer([monotonic]), so arrival order is table order)
-%% and {{test, GroupLeader}, Module, Function} naming the test each
-%% per-test group leader belongs to.
-ensure_diagnostics_table() ->
-    case ets:whereis(vouch_diagnostics) of
+%% vouch_crash_texts: {Key, Text} rendered reports, Key from
+%% unique_integer([monotonic]) so arrival order is table order — the raw
+%% text for --show-crash-reports. vouch_unattributed: {Key, Reason,
+%% TestName} for crashes a collector saw after its test was already claimed
+%% (a worker outliving its test) or that no test's tree produced — these
+%% fail the run. Both owned by the runner process, which lives until halt.
+ensure_diagnostics_tables() ->
+    case ets:whereis(vouch_crash_texts) of
         undefined ->
-            %% Owned by the runner process, which lives until halt.
-            ets:new(vouch_diagnostics, [named_table, public, ordered_set]);
+            ets:new(vouch_crash_texts, [named_table, public, ordered_set]),
+            ets:new(vouch_unattributed, [named_table, public, ordered_set]);
         _ ->
             ok
     end.
@@ -169,18 +169,12 @@ is_crash_report(#{level := error, msg := {report, #{label := {supervisor, _}}}})
 is_crash_report(_) ->
     false.
 
-%% Logger handler callback, installed by capture_diagnostics/0. Runs in the
-%% logging process for logger API calls and in the logger server for
-%% emulator-generated reports; either way, render now and append. Must
+%% Logger handler callback, installed by capture_diagnostics/0. Renders the
+%% event with the default handler's formatter and stores the text. Must
 %% never raise: logger removes a handler whose callback crashes.
-log(#{meta := Meta} = Event, Config) ->
-    catch ets:insert(vouch_diagnostics, {
-        erlang:unique_integer([monotonic]),
-        maps:get(gl, Meta, undefined),
-        render_diagnostic(Event, Config),
-        report_reason(Event),
-        false
-    }),
+log(Event, Config) ->
+    catch ets:insert(vouch_crash_texts,
+        {erlang:unique_integer([monotonic]), render_diagnostic(Event, Config)}),
     ok.
 
 render_diagnostic(Event, Config) ->
@@ -194,86 +188,71 @@ render_diagnostic(Event, Config) ->
             unicode:characters_to_binary(io_lib:format("~0tp~n", [Event]))
     end.
 
-%% The exit reason a crash report carries, in the {Reason, Stacktrace} shape
-%% catch_panic produces, so the Gleam side decodes a report exactly like a
-%% caught panic: find_panic reaches a gleam_error map inside it and
-%% split_crash names the top frame of anything else. Unknown report shapes
-%% pass the whole message through.
-report_reason(#{msg := {_Format, Args}, meta := #{error_logger := #{emulator := true}}})
-        when is_list(Args), Args =/= [] ->
-    %% "Error in process ~p [on node ~p] with exit value:~n~p~n": the exit
-    %% value is the last argument, already {Reason, Stacktrace}.
-    lists:last(Args);
-report_reason(#{msg := {report, #{label := {proc_lib, crash}, report := [Info | _]}}})
-        when is_list(Info) ->
-    case lists:keyfind(error_info, 1, Info) of
-        {error_info, {error, Reason, Stack}} -> {Reason, Stack};
-        {error_info, {Class, Reason, Stack}} -> {{Class, Reason}, Stack};
-        _ -> Info
-    end;
-report_reason(#{msg := {report, #{label := {_, terminate}, reason := Reason}}}) ->
-    Reason;
-report_reason(#{msg := {report, #{label := {supervisor, _}, report := Report}}})
-        when is_list(Report) ->
-    case lists:keyfind(reason, 1, Report) of
-        {reason, Reason} -> Reason;
-        false -> Report
-    end;
-report_reason(#{msg := Msg}) ->
-    Msg.
-
 %% Every captured report's text, in arrival order, for --show-crash-reports.
+%% Read once at the end of the run, by when every report has arrived.
 all_diagnostics() ->
     flush_logger(),
-    [Text || {Key, _GL, Text, _Reason, _Claimed} <- rows(), is_integer(Key)].
+    [Text || {_Key, Text} <- table(vouch_crash_texts)].
 
-%% The reports no test claimed — arrived after their test had finished, or
-%% from a process no test started — each with the test its group leader
-%% belonged to, when there was one. The run fails on these: a crash the
-%% outcomes do not account for must not hide behind a green summary.
+%% The crashes no test claimed — a process that died after its test had
+%% finished (named here, from its collector), or in no test's tree at all —
+%% each as {ReasonText, TestName}. Trace-driven, so these are exact; the run
+%% fails on them, because a crash no outcome accounts for must not hide
+%% behind a green summary.
 unattributed_diagnostics() ->
-    flush_logger(),
-    [{Text, test_of(GL)}
-     || {Key, GL, Text, _Reason, false} <- rows(), is_integer(Key)].
+    [{reason_text(Reason), TestName}
+     || {_Key, Reason, TestName} <- table(vouch_unattributed)].
 
-test_of(GL) ->
-    case catch ets:lookup(vouch_diagnostics, {test, GL}) of
-        [{_, Module, Function}] -> {some, {Module, Function}};
-        _ -> none
-    end.
+reason_text(Reason) ->
+    unicode:characters_to_binary(io_lib:format("~0tp", [Reason])).
 
-%% Remove and return only the captured reports whose text contains Marker,
-%% leaving the rest alone. The suite-facing probe: a test that deliberately
-%% crashes a process in its own process tree can consume the report (so it
-%% is not charged to the test) and assert it was captured rather than
-%% printed, without touching reports that belong to other tests.
+%% Remove and return the captured report texts containing Marker, leaving
+%% the rest alone. The suite-facing probe: a test that crashes a process on
+%% purpose can assert its report reached the capture table rather than
+%% stderr, without disturbing other tests' reports.
 take_diagnostics_matching(Marker) ->
     flush_logger(),
     [begin
-         catch ets:delete(vouch_diagnostics, Key),
+         catch ets:delete(vouch_crash_texts, Key),
          Text
      end
-     || {Key, _GL, Text, _Reason, _Claimed} <- rows(),
-        is_integer(Key), binary:match(Text, Marker) =/= nomatch].
+     || {Key, Text} <- table(vouch_crash_texts),
+        binary:match(Text, Marker) =/= nomatch].
 
-rows() ->
-    case catch ets:tab2list(vouch_diagnostics) of
+%% Remove and return the rendered reasons of unattributed crashes containing
+%% Marker. The suite-facing probe for the late-crash path: a test whose
+%% worker outlives it can poll for its own late crash and consume it, so the
+%% suite run does not fail on the unattributed entry it deliberately caused.
+take_unattributed_matching(Marker) ->
+    [begin
+         catch ets:delete(vouch_unattributed, Key),
+         Text
+     end
+     || {Key, Reason, _TestName} <- table(vouch_unattributed),
+        Text <- [reason_text(Reason)],
+        binary:match(Text, Marker) =/= nomatch].
+
+table(Name) ->
+    case catch ets:tab2list(Name) of
         Rows when is_list(Rows) -> Rows;
         _ -> []
     end.
 
-%% Emulator-generated reports ("Error in process") are handled in the
-%% logger_proxy process, whose mailbox they travel through; API-call events
-%% (proc_lib, gen_server) are handled in the logging process itself, before
-%% the crash propagates. A synchronous round-trip through logger_proxy makes
-%% sure everything already sent is in the table before it is read. The
-%% emulator sends the report before the dying process's exit signals and
-%% monitors fire, so a death the test observed is always in the table by
-%% the time the test's result reaches the runner. The logger server itself
-%% is round-tripped too, cheaply, in case an OTP release routes through it.
+%% Emulator-generated reports ("Error in process") reach the capture handler
+%% through the logger_proxy process's mailbox; API-call events (proc_lib,
+%% gen_server) are handled inline. A synchronous round-trip through each
+%% makes sure everything already sent is stored before the table is read.
+%% This is off the per-test hot path — the reports are display-only, read
+%% once at the end and by the suite's own probes.
 flush_logger() ->
-    catch sys:get_state(logger_proxy, 1000),
-    catch sys:get_state(logger, 1000).
+    flush(logger_proxy),
+    flush(logger).
+
+flush(Name) ->
+    case whereis(Name) of
+        undefined -> ok;
+        Pid -> catch sys:get_state(Pid, 1000)
+    end.
 
 %% Route the default handler to stderr, so whatever it still prints (and
 %% everything, if the capture handler could not be installed) stays off the
@@ -322,25 +301,38 @@ exported_zero_arity(ModuleName) ->
 %% depends on exit-reason fidelity; the DOWN branch only fires when the
 %% process died without reporting (exit signal, linked crash), and a test
 %% that outlives the timeout is killed. Returns {Invocation, CrashReports}:
-%% a constructor of vouch/internal/outcome.Invocation, and the crash reports
-%% of processes the test started that died while it ran (outcome.CrashReport
+%% a constructor of vouch/internal/outcome.Invocation, and the reasons of
+%% processes the test started that crashed while it ran (outcome.CrashReport
 %% tuples), which the runner folds into the test's outcome.
 %%
-%% The test process runs under its own group leader, a proxy that forwards
-%% io to the real one (start_group_leader/2). Every process the test starts
-%% inherits it, and every crash report the BEAM logs names the dying
-%% process's group leader, so a report is charged to exactly the test whose
-%% process died — in a parallel run as much as a sequential one — and a
-%% report that arrives late can still say which test it belonged to.
+%% A collector process traces the test process with `set_on_spawn`, so every
+%% process the test starts — directly or transitively — is traced too, and
+%% the collector receives a trace message for each abnormal exit. This is
+%% the pass/fail signal: exact, and never a race, because a trace exit is
+%% delivered before any result the test can send (unlike the BEAM's
+%% asynchronous crash report). After the result, trace_delivered/1 flushes
+%% any trace messages still in transit, then the collector is claimed. It
+%% keeps tracing afterwards: a worker that outlives its test and crashes
+%% later is recorded as unattributed (the runner fails the run on those).
 run_test(ModuleName, FunctionName, TimeoutMs) ->
     Module = binary_to_atom(beam_name(ModuleName), utf8),
     Function = binary_to_atom(FunctionName, utf8),
     Self = self(),
-    Leader = start_group_leader(ModuleName, FunctionName),
+    %% Spawned suspended on a `go` message so tracing is in place before the
+    %% test can start any worker.
     {Pid, Ref} = spawn_monitor(fun() ->
-        group_leader(Leader, self()),
+        receive go -> ok end,
         Self ! {vouch_result, self(), catch_panic(fun() -> Module:Function() end)}
     end),
+    Collector = spawn(?MODULE, collect_crashes,
+        [Pid, {ModuleName, FunctionName}, []]),
+    %% Drop any trace inherited from a traced caller — vouch's own suite runs
+    %% tests that themselves run tests, and a process can have only one
+    %% tracer — before setting this test's own. A harmless no-op for a
+    %% top-level test, which inherits nothing.
+    catch erlang:trace(Pid, false, [procs, set_on_spawn]),
+    catch erlang:trace(Pid, true, [procs, set_on_spawn, {tracer, Collector}]),
+    Pid ! go,
     Invocation = receive
         {vouch_result, Pid, {ok, nil}} ->
             erlang:demonitor(Ref, [flush]),
@@ -361,47 +353,73 @@ run_test(ModuleName, FunctionName, TimeoutMs) ->
         end,
         {timed_out, TimeoutMs}
     end,
-    {Invocation, claim_crash_reports(Leader)}.
+    {Invocation, claim_crashes(Collector)}.
 
-%% A group leader for one test: forwards every message (io requests, whose
-%% replies go straight back to the requester) to the real group leader, so
-%% tests and their processes print exactly as before. It is never stopped:
-%% a worker the test left running may still be printing through it after
-%% the test is over, and an io request to a dead leader raises. Idle
-%% leaders hibernate down to a few hundred bytes each.
-start_group_leader(ModuleName, FunctionName) ->
-    Real = group_leader(),
-    Leader = spawn(?MODULE, forward_io, [Real]),
-    catch ets:insert(vouch_diagnostics, {{test, Leader}, ModuleName, FunctionName}),
-    Leader.
-
-forward_io(Real) ->
+%% Tracer for one test's process tree. Accumulates the exit reason of every
+%% descendant that dies abnormally — anything but a clean exit (normal,
+%% shutdown), and never the test process itself, whose death is the
+%% invocation. On `claim` it hands back what it has and switches to
+%% forwarding: any later crash (a worker that outlived the test) goes to the
+%% unattributed table, tagged with this test, for the runner's end-of-run
+%% failure. Idle between events, it hibernates to a few hundred bytes.
+collect_crashes(TestPid, TestName, Acc) ->
     receive
-        Message ->
-            Real ! Message,
-            forward_io(Real)
+        {trace, TestPid, exit, _Reason} ->
+            collect_crashes(TestPid, TestName, Acc);
+        {trace, _Pid, exit, Reason} ->
+            case is_clean_exit(Reason) of
+                true -> collect_crashes(TestPid, TestName, Acc);
+                false -> collect_crashes(TestPid, TestName, [Reason | Acc])
+            end;
+        {claim, From, Ref} ->
+            From ! {crashes, Ref, lists:reverse(Acc)},
+            forward_crashes(TestPid, TestName);
+        _Other ->
+            collect_crashes(TestPid, TestName, Acc)
     after 200 ->
-        erlang:hibernate(?MODULE, forward_io, [Real])
+        erlang:hibernate(?MODULE, collect_crashes, [TestPid, TestName, Acc])
     end.
 
-%% The captured crash reports of processes under Leader, oldest first, each
-%% marked claimed so the end-of-run sweep for unattributed reports skips
-%% it. Flushing first is what makes this deterministic for a death the test
-%% observed (see flush_logger/0).
-claim_crash_reports(Leader) ->
-    flush_logger(),
-    case catch ets:select(vouch_diagnostics,
-            [{{'$1', Leader, '$2', '$3', false},
-              [{is_integer, '$1'}],
-              [{{'$1', '$2', '$3'}}]}]) of
-        Rows when is_list(Rows) ->
-            [begin
-                 catch ets:update_element(vouch_diagnostics, Key, {5, true}),
-                 {crash_report, Reason, Text}
-             end || {Key, Text, Reason} <- Rows];
-        _ ->
-            []
+forward_crashes(TestPid, TestName) ->
+    receive
+        {trace, TestPid, exit, _Reason} ->
+            forward_crashes(TestPid, TestName);
+        {trace, _Pid, exit, Reason} ->
+            case is_clean_exit(Reason) of
+                true -> ok;
+                false ->
+                    catch ets:insert(vouch_unattributed,
+                        {erlang:unique_integer([monotonic]), Reason,
+                         {some, TestName}})
+            end,
+            forward_crashes(TestPid, TestName);
+        _Other ->
+            forward_crashes(TestPid, TestName)
+    after 200 ->
+        erlang:hibernate(?MODULE, forward_crashes, [TestPid, TestName])
     end.
+
+is_clean_exit(normal) -> true;
+is_clean_exit(shutdown) -> true;
+is_clean_exit({shutdown, _}) -> true;
+is_clean_exit(_) -> false.
+
+%% Flush trace messages still in transit to their tracers (see run_test/3),
+%% then take the collector's accumulated crash reasons.
+claim_crashes(Collector) ->
+    Delivered = erlang:trace_delivered(all),
+    receive {trace_delivered, all, Delivered} -> ok end,
+    Ref = make_ref(),
+    Collector ! {claim, self(), Ref},
+    Reasons = receive {crashes, Ref, Rs} -> Rs after 5000 -> [] end,
+    reasons_to_reports(Reasons).
+
+%% Each crash reason as an outcome.CrashReport, whose single field the
+%% Gleam side decodes exactly like a caught panic — find_panic reaches a
+%% gleam_error map inside a {Reason, Stacktrace} exit, split_crash names the
+%% top frame of anything else.
+reasons_to_reports(Reasons) ->
+    [{crash_report, Reason} || Reason <- Reasons].
 
 
 %% Parallel execution: start one test without blocking on it. The spawned

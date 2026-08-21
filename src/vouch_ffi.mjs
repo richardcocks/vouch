@@ -95,6 +95,10 @@ export function take_diagnostics_matching(_marker) {
   erlangOnly("take_diagnostics_matching");
 }
 
+export function take_unattributed_matching(_marker) {
+  erlangOnly("take_unattributed_matching");
+}
+
 export function find_test_files() {
   erlangOnly("find_test_files");
 }
