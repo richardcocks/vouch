@@ -279,6 +279,9 @@ pub fn linked_undef_crash_names_call_site_test() {
   assert site.module == "vouch_no_such_module"
   assert site.function == "boom"
   assert site.arity == 0
+  // The linked process's undef also produces an emulator report; assert it
+  // was captured and consume it, keeping this suite's tail clean.
+  let assert [_, ..] = await_diagnostics("vouch_no_such_module", 40)
 }
 
 @target(erlang)
