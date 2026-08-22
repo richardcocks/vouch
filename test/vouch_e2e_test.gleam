@@ -18,7 +18,7 @@ pub fn playground_erlang_e2e_test() {
   assert code == 1
   assert string.contains(
     out,
-    "\"event\":\"run_end\",\"passed\":2,\"failed\":5,\"todo\":2,\"skipped\":1",
+    "\"event\":\"run_end\",\"passed\":3,\"failed\":5,\"todo\":2,\"skipped\":1",
   )
   assert string.contains(out, "\"outcome\":\"todo\"")
   assert string.contains(out, "\"site_function\":\"rate_limit\"")
@@ -65,7 +65,7 @@ pub fn playground_javascript_e2e_test() {
   // behind background_job_test.
   assert string.contains(
     out,
-    "\"event\":\"run_end\",\"passed\":3,\"failed\":4,\"todo\":2,\"skipped\":1",
+    "\"event\":\"run_end\",\"passed\":4,\"failed\":4,\"todo\":2,\"skipped\":1",
   )
   // On JavaScript the crash is a raw TypeError with no site to extract.
   assert string.contains(out, "\"kind\":\"unknown\"")
@@ -84,7 +84,7 @@ pub fn playground_timeout_e2e_test() {
   assert string.contains(out, "\"timeout_ms\":100")
   assert string.contains(
     out,
-    "\"event\":\"run_end\",\"passed\":1,\"failed\":6,\"todo\":2,\"skipped\":1",
+    "\"event\":\"run_end\",\"passed\":2,\"failed\":6,\"todo\":2,\"skipped\":1",
   )
 }
 
@@ -101,7 +101,7 @@ pub fn playground_parallel_e2e_test() {
   assert code == 1
   assert string.contains(
     out,
-    "\"event\":\"run_end\",\"passed\":2,\"failed\":5,\"todo\":2,\"skipped\":1",
+    "\"event\":\"run_end\",\"passed\":3,\"failed\":5,\"todo\":2,\"skipped\":1",
   )
   assert string.contains(out, "\"site_function\":\"rate_limit\"")
   // Attribution holds under --parallel too: the worker's crash is charged
@@ -147,9 +147,44 @@ pub fn playground_crash_reports_e2e_test() {
   )
   // The raw report, after the summary, not interleaved with the results.
   let assert Ok(#(_, after_summary)) =
-    string.split_once(shown, "2 passed, 5 failed, 2 todo, 1 skipped")
+    string.split_once(shown, "3 passed, 5 failed, 2 todo, 1 skipped")
   assert string.contains(after_summary, "Error in process")
   assert string.contains(after_summary, "background job crashed: queue is full")
+}
+
+@target(erlang)
+/// leaky_worker_test's worker is still running when the test ends. The test
+/// passes — leaking is not a failure — and the worker is killed there and
+/// listed after the summary, named by the test and by what started it.
+/// `--keep-leaked-processes` leaves it running and says so.
+pub fn playground_leaked_process_e2e_test() {
+  let assert Ok(#(_, killed)) =
+    run_command_merged(
+      "gleam",
+      ["test", "--", "--color=never"],
+      "examples/playground",
+    )
+  // Leaking is not a failure: the test itself passes.
+  assert string.contains(killed, "ok    playground_test.leaky_worker_test")
+  assert string.contains(
+    killed,
+    "vouch: 1 leaked process killed after the test that started them:",
+  )
+  assert string.contains(
+    killed,
+    "vouch: playground_test.leaky_worker_test left playground:start_long_worker/0 running",
+  )
+
+  let assert Ok(#(_, kept)) =
+    run_command_merged(
+      "gleam",
+      ["test", "--", "--color=never", "--keep-leaked-processes"],
+      "examples/playground",
+    )
+  assert string.contains(
+    kept,
+    "vouch: 1 leaked process left running by the test that started them:",
+  )
 }
 
 @target(erlang)

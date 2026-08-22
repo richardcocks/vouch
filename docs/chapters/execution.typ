@@ -52,10 +52,30 @@ stays visible but can never corrupt piped stdout.
 (`logger:update_handler_config` silently ignores a runtime type change;
 remove-and-re-add is required.)
 
-Known limitation, accepted for v1: a test that spawns unlinked long-lived
-processes, registers global names, or mutates shared ETS tables can still
-leak state between tests. Process-per-test is the 90% solution; full
-sandboxing is out of scope.
+The same trace closes the process half of that leak. A test's tree is not
+torn down when the test ends — nothing in the BEAM does that, and a `normal`
+exit is ignored by a non-trapping link — so a worker a test started outlives
+it by default. At the claim the collector already knows which descendants
+are still alive, from the `spawn` and `spawned` messages `procs` delivers
+alongside the exits. Those are killed in spawn order, so an ancestor dies
+before anything it would restart, and recorded as leaks for the end of the
+run. Order matters throughout: the flush comes first, so every death the
+test caused on its own is accounted for before the runner causes any; then
+the collector is switched to discarding, so vouch's own kills are not
+reported back as the test's crashes (the trap `killed` sets, since it is not
+a clean exit); then the kill; then a second round only if the first killed
+anything, in case a survivor restarted a child. With nothing left alive the
+collector stops, which also retires the one lingering process per test.
+`--keep-leaked-processes` reports without killing, for a suite that shares a
+process across tests deliberately or where a leaked process is linked
+outside its tree, since a kill propagates along that link.
+
+Known limitation, accepted for v1: a test that registers global names or
+mutates shared ETS tables can still leak state between tests, and a process
+started through an already-running supervisor or `application:start` is
+spawned outside the test's tree, so it is neither traced, reported, nor
+killed. Process-per-test plus killing what a test spawned is the 90%
+solution; full sandboxing is out of scope.
 
 == JavaScript target: sequential in-process
 

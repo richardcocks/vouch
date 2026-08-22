@@ -63,7 +63,8 @@ The FFI contract, in full:
   [Terminal facts (TTY, env vars)],
   [`io:columns/0`, `os:getenv/1`],
   [`isTTY` / `Deno.stdout.isTerminal`, env lookup],
-  [Catch a crash behind a test / keep BEAM reports off the streams],
+  [Catch a crash behind a test, kill what it leaked / keep BEAM reports off
+   the streams],
   [`erlang:trace` a per-test process tree; capture logger handler],
   [not needed (no processes)],
   [Halt with exit code],

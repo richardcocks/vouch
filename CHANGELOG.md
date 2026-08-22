@@ -41,6 +41,24 @@ block on stderr after the summary. Other logger output (a library's
 warnings) is not a crash and still goes to stderr. JavaScript is
 unaffected: there are no processes to crash behind a test there.
 
+Processes a test leaves running are now killed and reported. Nothing in the
+BEAM tears down a test's process tree when the test ends, and a `normal`
+exit does not kill a linked child, so a worker a test started kept running
+into later tests and could crash long after its own test had been reported.
+On the Erlang target the per-test trace now also names every process the
+test started that is still alive when it ends. Those are killed there —
+ancestors first, so a process restarting its children is gone before they
+are touched — and listed after the summary:
+
+    vouch: 1 leaked process killed after the test that started them:
+    vouch: playground_test.leaky_worker_test left playground:start_long_worker/0 running
+
+A leak does not fail the run. `--keep-leaked-processes` leaves them running
+and only reports them, for a suite that deliberately shares a process across
+tests or where a leaked process is linked to something outside the test's
+tree. Processes started through an already-running supervisor or
+`application:start` are spawned outside the test's tree and are unaffected.
+
 ## v1.2.0
 
 Watch mode added for the JavaScript target, supporting both Node and Deno

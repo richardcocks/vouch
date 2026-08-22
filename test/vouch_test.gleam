@@ -128,7 +128,7 @@ pub fn timeout_classifies_as_failure_test() {
 @target(erlang)
 pub fn hanging_test_times_out_test() {
   let #(invocation, reports) =
-    runner.run_in_process("helpers", "sleeps_forever", 100)
+    runner.run_in_process("helpers", "sleeps_forever", 100, True)
   assert invocation == outcome.TimedOut(100)
   // Killed, not crashed: the BEAM logs nothing for a kill.
   assert reports == []
@@ -137,7 +137,7 @@ pub fn hanging_test_times_out_test() {
 @target(erlang)
 pub fn linked_crash_is_contained_test() {
   let #(invocation, reports) =
-    runner.run_in_process("helpers", "crashes_linked", 5000)
+    runner.run_in_process("helpers", "crashes_linked", 5000, True)
   let assert outcome.Failed(outcome.PanicDetail(p)) =
     outcome.classify("vouch_test", "linked_crash_is_contained_test", invocation)
   assert p.message == "crash in linked process"
@@ -169,7 +169,7 @@ pub fn linked_crash_is_contained_test() {
 @target(erlang)
 pub fn background_crash_fails_passing_test_test() {
   let #(invocation, reports) =
-    runner.run_in_process("helpers", "crashes_in_background", 5000)
+    runner.run_in_process("helpers", "crashes_in_background", 5000, True)
   assert invocation == outcome.Passed
   let out =
     outcome.classify("vouch_test", "background_crash_test", invocation)
@@ -190,7 +190,7 @@ pub fn background_crash_fails_passing_test_test() {
 /// as a todo the test reached directly.
 pub fn background_todo_is_todo_outcome_test() {
   let #(invocation, reports) =
-    runner.run_in_process("helpers", "todo_in_background", 5000)
+    runner.run_in_process("helpers", "todo_in_background", 5000, True)
   assert invocation == outcome.Passed
   let assert outcome.Todo(p) =
     outcome.classify("vouch_test", "background_todo_test", invocation)
@@ -203,7 +203,7 @@ pub fn background_todo_is_todo_outcome_test() {
 /// A background crash with no Gleam payload still names what was called.
 pub fn background_undef_names_call_site_test() {
   let #(_, reports) =
-    runner.run_in_process("helpers", "undef_in_background", 5000)
+    runner.run_in_process("helpers", "undef_in_background", 5000, True)
   let assert outcome.Failed(outcome.BackgroundCrashDetail(outcome.UnknownDetail(
     reason,
     Some(site),
@@ -218,14 +218,149 @@ pub fn background_undef_names_call_site_test() {
 /// claimed (so no report is charged to the test), then crashes. The runner's
 /// tracer records the late death as unattributed, which fails the run. It is
 /// consumed here — after polling for it to arrive — so this suite run does
-/// not itself fail on it.
+/// not itself fail on it. Killing is off (the `False`), which is the only
+/// way a worker can still be alive to crash late; the default path is
+/// covered by leaked_process_is_killed_and_recorded_test.
 pub fn late_background_crash_becomes_unattributed_test() {
   let #(invocation, reports) =
-    runner.run_in_process("helpers", "returns_before_worker_crashes", 5000)
+    runner.run_in_process(
+      "helpers",
+      "returns_before_worker_crashes",
+      5000,
+      False,
+    )
   assert invocation == outcome.Passed
   assert reports == []
   let assert [text] = await_unattributed("late crash in background process", 80)
   assert string.contains(text, "late crash in background process")
+  // Recorded as a leak as well: the worker was alive when the test ended,
+  // and reporting a leak does not depend on killing it.
+  let assert [_] = runner.take_leaks_matching("returns_before_worker_crashes")
+}
+
+@target(erlang)
+/// The same, but late enough that the collector has hibernated first. A
+/// collector that cannot resume — hibernating into a function the module
+/// does not export fails on wake-up, not at the hibernate call — dies with
+/// `undef` and silently drops every crash after the first idle period, so
+/// the test above passes while the feature is broken for anything slower.
+/// Killing off again, for the same reason.
+pub fn crash_after_collector_hibernates_is_unattributed_test() {
+  let #(invocation, reports) =
+    runner.run_in_process(
+      "helpers",
+      "returns_long_before_worker_crashes",
+      5000,
+      False,
+    )
+  assert invocation == outcome.Passed
+  assert reports == []
+  let assert [text] =
+    await_unattributed("crash after the collector hibernated", 120)
+  assert string.contains(text, "crash after the collector hibernated")
+  let assert [_] =
+    runner.take_leaks_matching("returns_long_before_worker_crashes")
+}
+
+@target(erlang)
+/// A background todo must never mark the test skipped. `Skipped` means
+/// "this test body is pending", so `classify_panic` returns it for a todo
+/// whose module and function are the test's own — and a worker written
+/// inline in a test body carries exactly that pair. Folding that into the
+/// outcome would report a test whose worker hit unimplemented code as
+/// skipped, which contributes 0 to the exit code: the crash disappears.
+pub fn background_todo_never_skips_the_test_test() {
+  let #(invocation, reports) =
+    runner.run_in_process("helpers", "todo_in_inline_worker", 5000, True)
+  assert invocation == outcome.Passed
+  let assert outcome.Todo(p) =
+    outcome.with_crash_reports(
+      outcome.Pass,
+      "helpers",
+      "todo_in_inline_worker",
+      reports,
+    )
+  assert p.module == "helpers"
+  assert p.function == "todo_in_inline_worker"
+}
+
+@target(erlang)
+/// The default path for the same worker: it is still alive when the test
+/// ends, so it is killed there and recorded as a leak. Nothing survives to
+/// crash late, so the unattributed table — which the two tests above have
+/// to disable killing to reach at all — stays empty. The leak names what
+/// started the process: a Gleam closure reaches the trace as erlang:apply
+/// over a fun, and only fun_info recovers the function it was written in.
+pub fn leaked_process_is_killed_and_recorded_test() {
+  let #(invocation, reports) =
+    runner.run_in_process("helpers", "leaks_a_doomed_worker", 5000, True)
+  assert invocation == outcome.Passed
+  assert reports == []
+  let assert [#(test_module, test_function, leak)] =
+    runner.take_leaks_matching("leaks_a_doomed_worker")
+  assert test_module == "helpers"
+  assert test_function == "leaks_a_doomed_worker"
+  assert leak
+    == outcome.ProcessLeak(
+      module: "helpers",
+      function: "leaks_a_doomed_worker",
+      arity: 0,
+    )
+  // The worker panics 60ms in. Well past that, nothing has arrived: it was
+  // killed before it could get there, which is what makes this a kill and
+  // not merely a report.
+  sleep_ms(300)
+  assert await_unattributed("doomed worker was not killed", 0) == []
+}
+
+@target(erlang)
+/// A named spawn — not a closure — is reported by its own module and
+/// function, straight from the trace's MFA with no fun_info involved.
+pub fn leak_from_named_spawn_is_recorded_test() {
+  let #(invocation, _) =
+    runner.run_in_process("helpers", "leaks_named_worker", 5000, True)
+  assert invocation == outcome.Passed
+  let assert [#(_, _, leak)] = runner.take_leaks_matching("sleeps_a_long_time")
+  assert leak
+    == outcome.ProcessLeak(
+      module: "helpers",
+      function: "sleeps_a_long_time",
+      arity: 1,
+    )
+}
+
+@target(erlang)
+/// Ancestors die before their children: a supervisor left running is killed
+/// first, so it is gone before its child is touched and cannot restart it.
+/// Both are reported, the supervisor first — the set is ordered by spawn.
+pub fn leaked_supervisor_and_child_are_both_killed_test() {
+  let #(invocation, _) =
+    runner.run_in_process("helpers", "leaks_a_supervisor", 5000, True)
+  assert invocation == outcome.Passed
+  // The supervising process, and whichever children were live at the claim
+  // (one or two, depending on how the 20ms restart tick lands).
+  let assert [#(_, _, parent)] =
+    runner.take_leaks_matching("leaks_a_supervisor")
+  assert parent.function == "leaks_a_supervisor"
+  let children = runner.take_leaks_matching("supervise")
+  assert list.length(children) >= 1
+  // Past the children's 60ms fuse and several restart ticks: nothing was
+  // restarted and nothing crashed, so the parent died before its children.
+  sleep_ms(300)
+  assert await_unattributed("restarted worker crashed", 0) == []
+}
+
+@target(erlang)
+/// The suite's own scaffolding is not a leak. A nested run — a test that
+/// runs a test — spawns the inner test process, its collector and, in
+/// parallel mode, a middleman inside the outer test's traced tree. Reporting
+/// or killing those would be vouch charging the user for its own plumbing.
+pub fn vouch_scaffolding_is_not_reported_as_a_leak_test() {
+  let #(invocation, _) =
+    runner.run_in_process("helpers", "runs_a_nested_test", 5000, True)
+  assert invocation == outcome.Passed
+  assert runner.take_leaks_matching("vouch_ffi") == []
+  assert runner.take_leaks_matching("collect_crashes") == []
 }
 
 @target(erlang)
@@ -253,7 +388,7 @@ fn sleep_ms(ms: Int) -> Nil
 /// death is that inner run's business, not this test's.
 pub fn otp_wrapped_todo_is_todo_outcome_test() {
   let #(invocation, _reports) =
-    runner.run_in_process("vouch_otp_fixture", "call_into_todo", 5000)
+    runner.run_in_process("vouch_otp_fixture", "call_into_todo", 5000, True)
   let assert outcome.Todo(p) =
     outcome.classify(
       "vouch_test",
@@ -268,11 +403,11 @@ pub fn otp_wrapped_todo_is_todo_outcome_test() {
 pub fn isolated_pass_and_panic_test() {
   // failing_result returns an Error value, which is still a *passing* test —
   // only panics fail.
-  assert runner.run_in_process("helpers", "failing_result", 5000)
+  assert runner.run_in_process("helpers", "failing_result", 5000, True)
     == #(outcome.Passed, [])
   // A panic caught inside the test process is not a crash: no report.
   let assert #(outcome.Panicked(raw), []) =
-    runner.run_in_process("helpers", "panics", 5000)
+    runner.run_in_process("helpers", "panics", 5000, True)
   let assert Ok(p) = gleam_panic.from_dynamic(raw)
   assert p.message == "helper panicked"
 }
@@ -284,8 +419,8 @@ pub fn isolated_pass_and_panic_test() {
 /// while staying unambiguous.
 pub fn parallel_tests_overlap_test() {
   let t0 = monotonic_microseconds()
-  let a = runner.start_test("helpers", "sleeps_briefly", 5000)
-  let b = runner.start_test("helpers", "sleeps_briefly", 5000)
+  let a = runner.start_test("helpers", "sleeps_briefly", 5000, True)
+  let b = runner.start_test("helpers", "sleeps_briefly", 5000, True)
   let assert #(invocation_a, [], duration_a) = runner.await_test(a)
   let assert #(invocation_b, [], duration_b) = runner.await_test(b)
   let elapsed_ms = { monotonic_microseconds() - t0 } / 1000
@@ -300,7 +435,7 @@ pub fn parallel_tests_overlap_test() {
 /// The parallel path must keep per-test timeout semantics: a started test
 /// that outlives its timeout comes back TimedOut from await.
 pub fn parallel_test_times_out_test() {
-  let handle = runner.start_test("helpers", "sleeps_forever", 100)
+  let handle = runner.start_test("helpers", "sleeps_forever", 100, True)
   let #(invocation, _, _) = runner.await_test(handle)
   assert invocation == outcome.TimedOut(100)
 }
@@ -345,7 +480,7 @@ pub fn undef_crash_carries_call_site_test() {
 /// the call site rather than dumping raw frames.
 pub fn linked_undef_crash_names_call_site_test() {
   let #(invocation, reports) =
-    runner.run_in_process("helpers", "crashes_linked_undef", 5000)
+    runner.run_in_process("helpers", "crashes_linked_undef", 5000, True)
   let assert outcome.Failed(outcome.ExitDetail(reason, Some(site))) =
     outcome.classify(
       "vouch_test",
@@ -677,6 +812,7 @@ pub fn config_defaults_test() {
       color: config.Auto,
       parallel: config.Sequential,
       show_crash_reports: False,
+      kill_leaked_processes: True,
     ))
 }
 
@@ -690,6 +826,7 @@ pub fn config_format_and_filter_test() {
       color: config.Auto,
       parallel: config.Sequential,
       show_crash_reports: False,
+      kill_leaked_processes: True,
     ))
   assert config.from_args([
       "--filter=decode",
@@ -704,6 +841,7 @@ pub fn config_format_and_filter_test() {
       color: config.Auto,
       parallel: config.Sequential,
       show_crash_reports: False,
+      kill_leaked_processes: True,
     ))
 }
 
@@ -736,6 +874,15 @@ pub fn config_show_crash_reports_test() {
     config.from_args(["--show-crash-reports"])
   // A flag, not an option: a value is an error like any unknown flag.
   let assert Error(_) = config.from_args(["--show-crash-reports=yes"])
+}
+
+/// Killing leaked processes is the default; the flag only turns it off.
+pub fn config_keep_leaked_processes_test() {
+  let assert Ok(config.Config(kill_leaked_processes: True, ..)) =
+    config.from_args([])
+  let assert Ok(config.Config(kill_leaked_processes: False, ..)) =
+    config.from_args(["--keep-leaked-processes"])
+  let assert Error(_) = config.from_args(["--keep-leaked-processes=no"])
 }
 
 pub fn config_color_test() {

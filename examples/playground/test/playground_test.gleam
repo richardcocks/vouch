@@ -1,7 +1,7 @@
 //// One test per outcome flavour, so a plain run shows vouch's full range:
 ////
-////   gleam test                        - 2 pass, 5 fail, 2 todo, 1 skip
-////                                       (JavaScript: 3 pass, 4 fail — no
+////   gleam test                        - 3 pass, 5 fail, 2 todo, 1 skip
+////                                       (JavaScript: 4 pass, 4 fail — no
 ////                                       process crashes behind
 ////                                       background_job_test there)
 ////   gleam test -- --timeout=100       - slow_test also fails as a timeout
@@ -11,6 +11,9 @@
 ////   gleam test -- --show-crash-reports
 ////                                     - plus the full BEAM crash report
 ////                                       from background_job_test's worker
+////   gleam test -- --keep-leaked-processes
+////                                     - leave leaky_worker_test's worker
+////                                       running instead of killing it
 
 import playground
 import vouch
@@ -35,6 +38,15 @@ pub fn background_job_test() {
   // the outcome is the same on a one-scheduler CI box.
   playground.sleep(20)
   assert playground.add(0, 0) == 0
+}
+
+/// Starts a worker and returns while it is still running. The test passes —
+/// leaking a process is not a failure — but on the BEAM vouch kills the
+/// worker at the end of this test and lists it after the summary, so it
+/// cannot pollute a later test. (On JavaScript there is no worker at all.)
+pub fn leaky_worker_test() {
+  playground.start_long_worker()
+  assert playground.add(2, 2) == 4
 }
 
 /// Passes with the default 5000ms timeout; fails with --timeout=100.

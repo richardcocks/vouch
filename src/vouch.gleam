@@ -55,6 +55,7 @@ fn run_tests(args: List(String)) -> Nil {
             cfg.timeout_ms,
             cfg.parallel,
             cfg.show_crash_reports,
+            cfg.kill_leaked_processes,
           )
         config.Console, Some(path) ->
           runner.run(
@@ -66,6 +67,7 @@ fn run_tests(args: List(String)) -> Nil {
             cfg.timeout_ms,
             cfg.parallel,
             cfg.show_crash_reports,
+            cfg.kill_leaked_processes,
           )
         config.Json, None ->
           runner.run(
@@ -74,6 +76,7 @@ fn run_tests(args: List(String)) -> Nil {
             cfg.timeout_ms,
             cfg.parallel,
             cfg.show_crash_reports,
+            cfg.kill_leaked_processes,
           )
         config.Json, Some(path) ->
           runner.run(
@@ -82,6 +85,7 @@ fn run_tests(args: List(String)) -> Nil {
             cfg.timeout_ms,
             cfg.parallel,
             cfg.show_crash_reports,
+            cfg.kill_leaked_processes,
           )
         config.TeamCity, None ->
           runner.run(
@@ -90,6 +94,7 @@ fn run_tests(args: List(String)) -> Nil {
             cfg.timeout_ms,
             cfg.parallel,
             cfg.show_crash_reports,
+            cfg.kill_leaked_processes,
           )
         config.TeamCity, Some(path) ->
           runner.run(
@@ -98,6 +103,7 @@ fn run_tests(args: List(String)) -> Nil {
             cfg.timeout_ms,
             cfg.parallel,
             cfg.show_crash_reports,
+            cfg.kill_leaked_processes,
           )
       }
     }

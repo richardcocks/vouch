@@ -2,6 +2,9 @@
 //// stand in for "code under test": the suite invokes them via catch_panic
 //// and asserts on the decoded payloads.
 
+@target(erlang)
+import vouch/internal/runner
+
 pub fn is_even(n: Int) -> Bool {
   n % 2 == 0
 }
@@ -114,6 +117,95 @@ pub fn returns_before_worker_crashes() -> Nil {
     panic as "late crash in background process"
   })
 }
+
+@target(erlang)
+/// The same, but the worker sleeps past the collector's idle timeout before
+/// crashing, so the trace message arrives at a collector that has already
+/// hibernated. `returns_before_worker_crashes` never leaves the collector's
+/// first receive, so it cannot cover the wake-up path.
+pub fn returns_long_before_worker_crashes() -> Nil {
+  spawn(fn() {
+    sleep(400)
+    panic as "crash after the collector hibernated"
+  })
+}
+
+@target(erlang)
+/// A worker whose `todo` is lexically inside this function, so the panic
+/// names `helpers.todo_in_inline_worker` — Gleam attributes a closure's
+/// panic to the enclosing named function, which is what a worker written
+/// inline in a test body does too.
+pub fn todo_in_inline_worker() -> Nil {
+  run_in_background(fn() { todo as "unimplemented worker in a test body" })
+}
+
+@target(erlang)
+/// A worker that outlives its test and would announce it: if the kill does
+/// not land, it panics with a marker no other fixture uses, so surviving is
+/// observable rather than merely unproven.
+pub fn leaks_a_doomed_worker() -> Nil {
+  spawn(fn() {
+    sleep(60)
+    panic as "doomed worker was not killed"
+  })
+}
+
+@target(erlang)
+/// A leak from a named spawn rather than a closure, so the trace's MFA
+/// names the worker directly and needs no fun_info to make sense of.
+pub fn leaks_named_worker() -> Nil {
+  spawn_named("sleeps_a_long_time", 5000)
+}
+
+@target(erlang)
+pub fn sleeps_a_long_time(ms: Int) -> Nil {
+  sleep(ms)
+}
+
+@target(erlang)
+/// A leaked process that keeps starting children: killing a child alone
+/// would just bring another one, so the parent has to die first. Bounded so
+/// that a failure to kill it costs the suite half a second of spawning
+/// rather than an unbounded loop, and the children crash on a timer, which
+/// is what surfaces if any of them outlives the kill.
+pub fn leaks_a_supervisor() -> Nil {
+  spawn(fn() { supervise(25) })
+  // Let the first child exist before the test ends, so both are in the set.
+  sleep(30)
+}
+
+@target(erlang)
+fn supervise(remaining: Int) -> Nil {
+  case remaining {
+    0 -> Nil
+    n -> {
+      spawn(fn() {
+        sleep(60)
+        panic as "restarted worker crashed"
+      })
+      sleep(20)
+      supervise(n - 1)
+    }
+  }
+}
+
+@target(erlang)
+/// A test that runs a test: the shape vouch's own suite uses everywhere,
+/// and the one that puts vouch's own processes inside a traced tree.
+pub fn runs_a_nested_test() -> Nil {
+  let _ = runner.run_in_process("helpers", "is_even_wrapper", 5000, True)
+  Nil
+}
+
+@target(erlang)
+pub fn is_even_wrapper() -> Nil {
+  let _ = is_even(2)
+  Nil
+}
+
+@target(erlang)
+@external(erlang, "vouch_helpers_ffi", "spawn_named")
+fn spawn_named(function: String, ms: Int) -> Nil
 
 @target(erlang)
 @external(erlang, "timer", "sleep")

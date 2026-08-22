@@ -99,6 +99,15 @@ export function take_unattributed_matching(_marker) {
   erlangOnly("take_unattributed_matching");
 }
 
+// Same again for leaked processes: nothing here spawns, so nothing leaks.
+export function leaked_processes() {
+  return List$Empty();
+}
+
+export function take_leaks_matching(_marker) {
+  erlangOnly("take_leaks_matching");
+}
+
 export function find_test_files() {
   erlangOnly("find_test_files");
 }

@@ -26,6 +26,14 @@ pub fn start_background_job() -> Nil {
   spawn(fn() { panic as "background job crashed: queue is full" })
 }
 
+/// A worker with no owner: the caller returns while it is still running.
+/// Nothing crashes — this is the leak, not the crash — and on the BEAM vouch
+/// kills it when the test that started it ends, so it cannot run on into a
+/// later test, and reports it after the summary.
+pub fn start_long_worker() -> Nil {
+  spawn(fn() { sleep(60_000) })
+}
+
 @external(erlang, "playground_ffi", "spawn")
 @external(javascript, "./playground_ffi.mjs", "spawn")
 fn spawn(job: fn() -> Nil) -> Nil

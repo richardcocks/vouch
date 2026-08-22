@@ -64,11 +64,13 @@ fn finish(
   outcomes: List(TestOutcome),
   duration: Int,
   show_crash_reports: Bool,
+  kill_leaked: Bool,
 ) -> Nil {
   let t = tally(outcomes)
   let _ = rep.handle(state, event.RunEnd(t, duration))
   let unattributed = unattributed_crash_reports()
   print_unattributed(unattributed)
+  print_leaks(leaked_processes(), kill_leaked)
   case show_crash_reports {
     True -> print_crash_reports(all_crash_reports())
     False -> Nil
@@ -81,9 +83,9 @@ fn finish(
 }
 
 /// Crash reports no test claimed: the process died after its test had
-/// finished (named here, from the group leader it inherited), or outside
-/// any test. Printed on stderr — clear of a machine-read stdout stream —
-/// and the run fails.
+/// finished (named here by that test's collector, which keeps tracing its
+/// tree past the claim), or outside any traced tree at all. Printed on
+/// stderr — clear of a machine-read stdout stream — and the run fails.
 fn print_unattributed(
   reports: List(#(String, Option(#(String, String)))),
 ) -> Nil {
@@ -109,6 +111,46 @@ fn print_unattributed(
             io.print_error("vouch: from a process no test started:\n")
         }
         io.print_error(text)
+      })
+    }
+  }
+}
+
+/// Processes a test left running when it ended, killed at that point and
+/// listed here — named by the test that leaked them and by what started
+/// them. Printed on stderr, clear of a machine-read stdout stream. A leak
+/// does not fail the run: the process was cleaned up before it could
+/// pollute a later test, and this report is what keeps that from being
+/// silent. `--keep-leaked-processes` turns the killing off.
+fn print_leaks(
+  leaks: List(#(String, String, outcome.ProcessLeak)),
+  kill_leaked: Bool,
+) -> Nil {
+  case leaks {
+    [] -> Nil
+    _ -> {
+      term.warn(
+        count(leaks, "leaked process")
+        <> case kill_leaked {
+          True -> " killed after the test that started them:"
+          False -> " left running by the test that started them:"
+        },
+      )
+      list.each(leaks, fn(leak) {
+        let #(module, function, origin) = leak
+        io.print_error(
+          "vouch: "
+          <> module
+          <> "."
+          <> function
+          <> " left "
+          <> origin.module
+          <> ":"
+          <> origin.function
+          <> "/"
+          <> int.to_string(origin.arity)
+          <> " running\n",
+        )
       })
     }
   }
@@ -180,10 +222,20 @@ pub fn run(
   timeout_ms: Int,
   parallel: config.Parallelism,
   show_crash_reports: Bool,
+  kill_leaked: Bool,
 ) -> Nil {
   case target() {
-    Erlang -> run_beam(rep, filter, timeout_ms, parallel, show_crash_reports)
-    JavaScript -> run_js(rep, filter, timeout_ms, parallel, show_crash_reports)
+    Erlang ->
+      run_beam(
+        rep,
+        filter,
+        timeout_ms,
+        parallel,
+        show_crash_reports,
+        kill_leaked,
+      )
+    JavaScript ->
+      run_js(rep, filter, timeout_ms, parallel, show_crash_reports, kill_leaked)
   }
 }
 
@@ -196,6 +248,7 @@ fn run_beam(
   timeout_ms: Int,
   parallel: config.Parallelism,
   show_crash_reports: Bool,
+  kill_leaked: Bool,
 ) -> Nil {
   capture_diagnostics()
   let started = now_microseconds()
@@ -224,8 +277,8 @@ fn run_beam(
       event.RunStart(list.length(tests), list.length(candidates)),
     )
   let #(state, outcomes) = case workers(parallel) {
-    1 -> run_sequential(rep, state, tests, timeout_ms)
-    n -> run_window(rep, tests, [], 0, state, [], timeout_ms, n)
+    1 -> run_sequential(rep, state, tests, timeout_ms, kill_leaked)
+    n -> run_window(rep, tests, [], 0, state, [], timeout_ms, n, kill_leaked)
   }
   finish(
     rep,
@@ -233,6 +286,7 @@ fn run_beam(
     list.reverse(outcomes),
     now_microseconds() - started,
     show_crash_reports,
+    kill_leaked,
   )
 }
 
@@ -249,13 +303,15 @@ fn run_sequential(
   state: s,
   tests: List(#(String, String)),
   timeout_ms: Int,
+  kill_leaked: Bool,
 ) -> #(s, List(TestOutcome)) {
   list.fold(tests, #(state, []), fn(acc, test_case) {
     let #(state, outcomes) = acc
     let #(module, function) = test_case
     let state = rep.handle(state, event.TestStart(module, function))
     let test_started = now_microseconds()
-    let #(invocation, reports) = run_in_process(module, function, timeout_ms)
+    let #(invocation, reports) =
+      run_in_process(module, function, timeout_ms, kill_leaked)
     let duration = now_microseconds() - test_started
     let out =
       outcome.classify(module, function, invocation)
@@ -281,12 +337,13 @@ fn run_window(
   outcomes: List(TestOutcome),
   timeout_ms: Int,
   workers: Int,
+  kill_leaked: Bool,
 ) -> #(s, List(TestOutcome)) {
   case pending {
     [next, ..rest] if running_count < workers -> {
       let #(module, function) = next
       let state = rep.handle(state, event.TestStart(module, function))
-      let handle = start_test(module, function, timeout_ms)
+      let handle = start_test(module, function, timeout_ms, kill_leaked)
       run_window(
         rep,
         rest,
@@ -296,6 +353,7 @@ fn run_window(
         outcomes,
         timeout_ms,
         workers,
+        kill_leaked,
       )
     }
     _ ->
@@ -317,6 +375,7 @@ fn run_window(
             [out, ..outcomes],
             timeout_ms,
             workers,
+            kill_leaked,
           )
         }
       }
@@ -340,6 +399,22 @@ fn all_crash_reports() -> List(String)
 @external(erlang, "vouch_ffi", "unattributed_diagnostics")
 @external(javascript, "../../vouch_ffi.mjs", "unattributed_diagnostics")
 fn unattributed_crash_reports() -> List(#(String, Option(#(String, String))))
+
+/// Every process a test left running when it ended, as the test that
+/// leaked it and what started it. Read once at the end of the run.
+@external(erlang, "vouch_ffi", "leaked_processes")
+@external(javascript, "../../vouch_ffi.mjs", "leaked_processes")
+fn leaked_processes() -> List(#(String, String, outcome.ProcessLeak))
+
+/// Remove and return the recorded leaks whose origin function contains
+/// `marker`. Public so vouch's own suite can leak a process on purpose,
+/// prove it was killed and recorded, and consume the row so the end-of-run
+/// leak report does not carry the suite's own deliberate leaks.
+@external(erlang, "vouch_ffi", "take_leaks_matching")
+@external(javascript, "../../vouch_ffi.mjs", "take_leaks_matching")
+pub fn take_leaks_matching(
+  marker: String,
+) -> List(#(String, String, outcome.ProcessLeak))
 
 /// Remove and return the captured crash reports whose text contains
 /// `marker`, leaving the rest alone. Public so vouch's own suite can crash a
@@ -382,6 +457,7 @@ pub fn run_in_process(
   module: String,
   function: String,
   timeout_ms: Int,
+  kill_leaked: Bool,
 ) -> #(outcome.Invocation, List(outcome.CrashReport))
 
 /// An in-flight test started by `start_test`: created and consumed only by
@@ -399,6 +475,7 @@ pub fn start_test(
   module: String,
   function: String,
   timeout_ms: Int,
+  kill_leaked: Bool,
 ) -> TestHandle
 
 @external(erlang, "vouch_ffi", "await_test")
@@ -425,7 +502,15 @@ pub fn warn_ineffective_js_flags(
   timeout_ms: Int,
   parallel: config.Parallelism,
   show_crash_reports: Bool,
+  kill_leaked: Bool,
 ) -> Nil {
+  case kill_leaked {
+    True -> Nil
+    False ->
+      term.warn(
+        "--keep-leaked-processes has no effect on the JavaScript target — tests run in-process and start no processes to leak",
+      )
+  }
   case show_crash_reports {
     False -> Nil
     True ->
@@ -455,8 +540,14 @@ fn run_js(
   timeout_ms: Int,
   parallel: config.Parallelism,
   show_crash_reports: Bool,
+  kill_leaked: Bool,
 ) -> Nil {
-  warn_ineffective_js_flags(timeout_ms, parallel, show_crash_reports)
+  warn_ineffective_js_flags(
+    timeout_ms,
+    parallel,
+    show_crash_reports,
+    kill_leaked,
+  )
   let started = now_microseconds()
   js_run_tests(
     #(rep.init, [], 0),
@@ -485,6 +576,7 @@ fn run_js(
         list.reverse(outs),
         now_microseconds() - started,
         show_crash_reports,
+        kill_leaked,
       )
     },
   )

@@ -2,7 +2,7 @@
 -export([
     find_test_files/0,
     exported_zero_arity/1,
-    run_test/3,
+    run_test/4,
     catch_panic/1,
     split_crash/1,
     decode_panic/1,
@@ -14,9 +14,17 @@
     unattributed_diagnostics/0,
     take_diagnostics_matching/1,
     take_unattributed_matching/1,
+    leaked_processes/0,
+    take_leaks_matching/1,
     crash_filter/2,
     log/2,
-    collect_crashes/3,
+    %% The collector's three states. All exported because erlang:hibernate/3
+    %% resumes through an exported call: hibernating into a local function
+    %% succeeds and then fails with undef on wake-up, silently killing the
+    %% collector.
+    collect_crashes/4,
+    sweep_leaks/3,
+    forward_crashes/2,
     write_file/2,
     read_source/3,
     halt/1,
@@ -28,7 +36,7 @@
     take_pending_key/0,
     keys_active/0,
     ensure_unicode_stdio/0,
-    start_test/3,
+    start_test/4,
     await_test/1,
     schedulers_online/0,
     is_erlang/0,
@@ -133,11 +141,14 @@ capture_diagnostics() ->
 %% TestName} for crashes a collector saw after its test was already claimed
 %% (a worker outliving its test) or that no test's tree produced — these
 %% fail the run. Both owned by the runner process, which lives until halt.
+%% vouch_leaks: {Key, TestName, Leak} for processes a test left running,
+%% recorded as each test is claimed.
 ensure_diagnostics_tables() ->
     case ets:whereis(vouch_crash_texts) of
         undefined ->
             ets:new(vouch_crash_texts, [named_table, public, ordered_set]),
-            ets:new(vouch_unattributed, [named_table, public, ordered_set]);
+            ets:new(vouch_unattributed, [named_table, public, ordered_set]),
+            ets:new(vouch_leaks, [named_table, public, ordered_set]);
         _ ->
             ok
     end.
@@ -232,6 +243,25 @@ take_unattributed_matching(Marker) ->
         Text <- [reason_text(Reason)],
         binary:match(Text, Marker) =/= nomatch].
 
+%% Every process a test left running, in the order they were recorded, as
+%% {TestModule, TestFunction, Leak}. Read once at the end of the run.
+leaked_processes() ->
+    [{TestModule, TestFunction, Leak}
+     || {_Key, {TestModule, TestFunction}, Leak} <- table(vouch_leaks)].
+
+%% Remove and return the leaks whose origin function contains Marker. The
+%% suite-facing probe: a test that leaks a process on purpose can assert it
+%% was killed and recorded, and consume the row so the end-of-run leak
+%% report does not carry the suite's own deliberate leaks.
+take_leaks_matching(Marker) ->
+    [begin
+         catch ets:delete(vouch_leaks, Key),
+         {TestModule, TestFunction, Leak}
+     end
+     || {Key, {TestModule, TestFunction}, Leak} <- table(vouch_leaks),
+        {process_leak, _Module, Function, _Arity} <- [Leak],
+        binary:match(Function, Marker) =/= nomatch].
+
 table(Name) ->
     case catch ets:tab2list(Name) of
         Rows when is_list(Rows) -> Rows;
@@ -314,7 +344,14 @@ exported_zero_arity(ModuleName) ->
 %% any trace messages still in transit, then the collector is claimed. It
 %% keeps tracing afterwards: a worker that outlives its test and crashes
 %% later is recorded as unattributed (the runner fails the run on those).
-run_test(ModuleName, FunctionName, TimeoutMs) ->
+%%
+%% The same trace also names every process the test started that is still
+%% alive when the test ends. With KillLeaked those are killed — ancestors
+%% first, so a supervisor cannot restart what has already gone — and
+%% recorded as leaks, which is what makes process-per-test a real boundary
+%% rather than a 90% one: nothing survives to crash late. With KillLeaked
+%% false the tree is left alone and late crashes take the unattributed path.
+run_test(ModuleName, FunctionName, TimeoutMs, KillLeaked) ->
     Module = binary_to_atom(beam_name(ModuleName), utf8),
     Function = binary_to_atom(FunctionName, utf8),
     Self = self(),
@@ -325,7 +362,7 @@ run_test(ModuleName, FunctionName, TimeoutMs) ->
         Self ! {vouch_result, self(), catch_panic(fun() -> Module:Function() end)}
     end),
     Collector = spawn(?MODULE, collect_crashes,
-        [Pid, {ModuleName, FunctionName}, []]),
+        [Pid, {ModuleName, FunctionName}, [], #{}]),
     %% Drop any trace inherited from a traced caller — vouch's own suite runs
     %% tests that themselves run tests, and a process can have only one
     %% tracer — before setting this test's own. A harmless no-op for a
@@ -353,7 +390,20 @@ run_test(ModuleName, FunctionName, TimeoutMs) ->
         end,
         {timed_out, TimeoutMs}
     end,
-    {Invocation, claim_crashes(Collector)}.
+    {Reports, Leaks} = claim_crashes(Collector, KillLeaked),
+    record_leaks({ModuleName, FunctionName}, Leaks),
+    {Invocation, Reports}.
+
+%% Recorded from whichever process ran the test — the runner, or a parallel
+%% middleman that dies with it — so the table is never created here: it is
+%% owned by the runner (capture_diagnostics) and a middleman that created it
+%% would take it to the grave.
+record_leaks(_TestName, []) ->
+    ok;
+record_leaks(TestName, Leaks) ->
+    [catch ets:insert(vouch_leaks,
+        {erlang:unique_integer([monotonic]), TestName, Leak}) || Leak <- Leaks],
+    ok.
 
 %% Tracer for one test's process tree. Accumulates the exit reason of every
 %% descendant that dies abnormally — anything but a clean exit (normal,
@@ -362,23 +412,131 @@ run_test(ModuleName, FunctionName, TimeoutMs) ->
 %% forwarding: any later crash (a worker that outlived the test) goes to the
 %% unattributed table, tagged with this test, for the runner's end-of-run
 %% failure. Idle between events, it hibernates to a few hundred bytes.
-collect_crashes(TestPid, TestName, Acc) ->
+collect_crashes(TestPid, TestName, Acc, Live) ->
     receive
         {trace, TestPid, exit, _Reason} ->
-            collect_crashes(TestPid, TestName, Acc);
-        {trace, _Pid, exit, Reason} ->
+            collect_crashes(TestPid, TestName, Acc, Live);
+        {trace, Pid, exit, Reason} ->
+            Rest = maps:remove(Pid, Live),
             case is_clean_exit(Reason) of
-                true -> collect_crashes(TestPid, TestName, Acc);
-                false -> collect_crashes(TestPid, TestName, [Reason | Acc])
+                true -> collect_crashes(TestPid, TestName, Acc, Rest);
+                false -> collect_crashes(TestPid, TestName, [Reason | Acc], Rest)
             end;
-        {claim, From, Ref} ->
-            From ! {crashes, Ref, lists:reverse(Acc)},
-            forward_crashes(TestPid, TestName);
+        {trace, _Parent, spawn, Child, MFA} ->
+            collect_crashes(TestPid, TestName, Acc,
+                note_spawn(Child, MFA, Live));
+        {trace, Child, spawned, _Parent, MFA} ->
+            collect_crashes(TestPid, TestName, Acc,
+                note_spawn(Child, MFA, Live));
+        {claim, From, Ref, Kill} ->
+            From ! {crashes, Ref, lists:reverse(Acc), leaks_of(Live)},
+            case Kill of
+                true -> sweep_leaks(TestPid, TestName, Live);
+                false -> forward_crashes(TestPid, TestName)
+            end;
         _Other ->
-            collect_crashes(TestPid, TestName, Acc)
+            collect_crashes(TestPid, TestName, Acc, Live)
     after 200 ->
-        erlang:hibernate(?MODULE, collect_crashes, [TestPid, TestName, Acc])
+        erlang:hibernate(?MODULE, collect_crashes,
+            [TestPid, TestName, Acc, Live])
     end.
+
+%% Between the claim and the last kill round. Crash reasons are discarded:
+%% every death from here is one the runner is causing, and reporting our own
+%% kills as the test's crashes is exactly the trap `killed` sets. Spawns are
+%% still tracked, so a child a supervisor restarted before it was itself
+%% killed shows up in the next sweep. On `finish` the collector stops if
+%% nothing survived — which is the normal case, and retires the one
+%% lingering process per test — or falls back to forwarding if something
+%% did, so a stubborn survivor still reports a late crash.
+sweep_leaks(TestPid, TestName, Live) ->
+    receive
+        {trace, TestPid, exit, _Reason} ->
+            sweep_leaks(TestPid, TestName, Live);
+        {trace, Pid, exit, _Reason} ->
+            sweep_leaks(TestPid, TestName, maps:remove(Pid, Live));
+        {trace, _Parent, spawn, Child, MFA} ->
+            sweep_leaks(TestPid, TestName, note_spawn(Child, MFA, Live));
+        {trace, Child, spawned, _Parent, MFA} ->
+            sweep_leaks(TestPid, TestName, note_spawn(Child, MFA, Live));
+        {sweep, From, Ref} ->
+            From ! {swept, Ref, live_pids(Live)},
+            sweep_leaks(TestPid, TestName, Live);
+        {finish, From, Ref} ->
+            From ! {finished, Ref},
+            case live_pids(Live) of
+                [] -> ok;
+                _ -> forward_crashes(TestPid, TestName)
+            end;
+        _Other ->
+            sweep_leaks(TestPid, TestName, Live)
+    after 200 ->
+        erlang:hibernate(?MODULE, sweep_leaks, [TestPid, TestName, Live])
+    end.
+
+%% One live descendant, keyed by pid. The monotonic key orders the set by
+%% spawn, so killing in key order takes ancestors before their children and
+%% a supervisor is gone before anything it would restart is touched. `spawn`
+%% and `spawned` both arrive for the same child, so the first one wins.
+note_spawn(Child, MFA, Live) ->
+    case maps:is_key(Child, Live) of
+        true -> Live;
+        false -> Live#{Child => {erlang:unique_integer([monotonic]), origin(MFA)}}
+    end.
+
+%% What started a process, for the leak report. A Gleam closure reaches the
+%% trace as erlang:apply/2 over a fun, naming nothing useful; fun_info
+%% recovers the module it was compiled into and the generated name
+%% `-enclosing/0-fun-0-`, whose enclosing function is the half worth showing
+%% — the same function a panic in that closure would report.
+origin({erlang, apply, [Fun, Args]}) when is_function(Fun), is_list(Args) ->
+    Info = erlang:fun_info(Fun),
+    Module = proplists:get_value(module, Info, unknown),
+    Name = proplists:get_value(name, Info, unknown),
+    {process_leak, atom_to_binary(Module, utf8), enclosing_name(Name),
+     length(Args)};
+origin({Module, Function, Args})
+        when is_atom(Module), is_atom(Function), is_list(Args) ->
+    {process_leak, atom_to_binary(Module, utf8),
+     atom_to_binary(Function, utf8), length(Args)};
+origin(_) ->
+    {process_leak, <<"unknown">>, <<"unknown">>, 0}.
+
+enclosing_name(Name) when is_atom(Name) ->
+    Bin = atom_to_binary(Name, utf8),
+    case Bin of
+        <<"-", Rest/binary>> ->
+            case binary:split(Rest, <<"/">>) of
+                [Enclosing, _] -> Enclosing;
+                _ -> Bin
+            end;
+        _ ->
+            Bin
+    end;
+enclosing_name(_) ->
+    <<"unknown">>.
+
+%% The leaked processes still alive, oldest spawn first. Two exclusions.
+%% Dead pids: a descendant whose trace was dropped (the nested case below)
+%% never reports its exit, so the map can outlive it. vouch's own
+%% scaffolding: the suite runs tests that run tests, and the inner test
+%% process, its collector and the parallel middleman are all spawned inside
+%% a traced tree — vouch's plumbing, not the user's leak, and killing our
+%% own collector would be self-inflicted.
+live_leaks(Live) ->
+    Sorted = lists:sort(fun({_, {A, _}}, {_, {B, _}}) -> A =< B end,
+                        maps:to_list(Live)),
+    [{Pid, Origin}
+     || {Pid, {_Key, Origin}} <- Sorted,
+        not is_vouch_process(Origin),
+        is_process_alive(Pid)].
+
+is_vouch_process({process_leak, <<"vouch_ffi">>, _Function, _Arity}) -> true;
+is_vouch_process(_) -> false.
+
+leaks_of(Live) -> [Origin || {_Pid, Origin} <- live_leaks(Live)].
+
+live_pids(Live) -> [Pid || {Pid, _Origin} <- live_leaks(Live)].
 
 forward_crashes(TestPid, TestName) ->
     receive
@@ -404,15 +562,49 @@ is_clean_exit(shutdown) -> true;
 is_clean_exit({shutdown, _}) -> true;
 is_clean_exit(_) -> false.
 
-%% Flush trace messages still in transit to their tracers (see run_test/3),
-%% then take the collector's accumulated crash reasons.
-claim_crashes(Collector) ->
-    Delivered = erlang:trace_delivered(all),
-    receive {trace_delivered, all, Delivered} -> ok end,
+%% Flush trace messages still in transit to their tracers (see run_test/4),
+%% then take the collector's accumulated crash reasons and the processes the
+%% test left running. The flush comes first so every death the test caused
+%% on its own is already accounted for before the runner causes any itself.
+claim_crashes(Collector, KillLeaked) ->
+    flush_traces(),
     Ref = make_ref(),
-    Collector ! {claim, self(), Ref},
-    Reasons = receive {crashes, Ref, Rs} -> Rs after 5000 -> [] end,
-    reasons_to_reports(Reasons).
+    Collector ! {claim, self(), Ref, KillLeaked},
+    {Reasons, Leaks} =
+        receive {crashes, Ref, Rs, Ls} -> {Rs, Ls} after 5000 -> {[], []} end,
+    case KillLeaked of
+        true -> kill_leaked(Collector);
+        false -> ok
+    end,
+    {reasons_to_reports(Reasons), Leaks}.
+
+%% Take down what the test left running. A second round only if the first
+%% killed anything: the one thing that can reappear is a child a supervisor
+%% restarted, and the supervisor itself died in round one.
+kill_leaked(Collector) ->
+    case kill_round(Collector) of
+        [] -> ok;
+        _ -> kill_round(Collector)
+    end,
+    Ref = make_ref(),
+    Collector ! {finish, self(), Ref},
+    receive {finished, Ref} -> ok after 5000 -> ok end.
+
+%% `kill` rather than `shutdown`, which a process trapping exits may ignore.
+%% The flush afterwards puts the resulting exits in the collector's mailbox
+%% before the next sweep reads its map, so a round's own kills never look
+%% like survivors.
+kill_round(Collector) ->
+    Ref = make_ref(),
+    Collector ! {sweep, self(), Ref},
+    Pids = receive {swept, Ref, Ps} -> Ps after 5000 -> [] end,
+    [exit(Pid, kill) || Pid <- Pids],
+    flush_traces(),
+    Pids.
+
+flush_traces() ->
+    Delivered = erlang:trace_delivered(all),
+    receive {trace_delivered, all, Delivered} -> ok end.
 
 %% Each crash reason as an outcome.CrashReport, whose single field the
 %% Gleam side decodes exactly like a caught panic — find_panic reaches a
@@ -427,12 +619,13 @@ reasons_to_reports(Reasons) ->
 %% isolation, timeout and crash-report semantics — measures the duration,
 %% and posts the result back tagged with a unique ref. The monitor covers
 %% the theoretical case of the middleman dying before it reports.
-start_test(Module, Function, TimeoutMs) ->
+start_test(Module, Function, TimeoutMs, KillLeaked) ->
     Self = self(),
     Ref = make_ref(),
     {_Pid, MonRef} = spawn_monitor(fun() ->
         Started = erlang:monotonic_time(microsecond),
-        {Invocation, Reports} = run_test(Module, Function, TimeoutMs),
+        {Invocation, Reports} =
+            run_test(Module, Function, TimeoutMs, KillLeaked),
         Duration = erlang:monotonic_time(microsecond) - Started,
         Self ! {vouch_parallel, Ref, Invocation, Reports, Duration}
     end),

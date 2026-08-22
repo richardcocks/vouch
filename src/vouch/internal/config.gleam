@@ -39,6 +39,13 @@ pub type Config {
     /// default: a death under a test already shows in the test's outcome,
     /// as its own failure or a "Background process crashed" one.
     show_crash_reports: Bool,
+    /// Kill the processes a test leaves running when it ends, on the Erlang
+    /// target. On by default: process-per-test is only a real boundary if
+    /// nothing survives the test that started it. Turn it off when a suite
+    /// deliberately shares a process across tests, or when a leaked process
+    /// is linked to something outside the test's tree — killing it would
+    /// propagate.
+    kill_leaked_processes: Bool,
   )
 }
 
@@ -55,6 +62,7 @@ pub fn from_args(args: List(String)) -> Result(Config, String) {
       color: Auto,
       parallel: Sequential,
       show_crash_reports: False,
+      kill_leaked_processes: True,
     ),
   )
 }
@@ -98,6 +106,8 @@ fn parse(args: List(String), config: Config) -> Result(Config, String) {
       }
     ["--show-crash-reports", ..rest] ->
       parse(rest, Config(..config, show_crash_reports: True))
+    ["--keep-leaked-processes", ..rest] ->
+      parse(rest, Config(..config, kill_leaked_processes: False))
     [arg, ..] ->
       case string.starts_with(arg, "-") {
         True -> Error(usage("unknown option: " <> arg))
@@ -142,6 +152,10 @@ fn usage(problem: String) -> String {
   <> "  --show-crash-reports\n"
   <> "                  also print the full BEAM crash reports of processes\n"
   <> "                  that died during the run, after the summary (Erlang)\n"
+  <> "  --keep-leaked-processes\n"
+  <> "                  do not kill the processes a test leaves running when\n"
+  <> "                  it ends; they are killed and reported by default\n"
+  <> "                  (Erlang)\n"
   <> "  --color=mode    console colour: auto (default), always, never;\n"
   <> "                  auto respects NO_COLOR and non-TTY output\n"
   <> "\n"

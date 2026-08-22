@@ -58,6 +58,15 @@ pub type CrashReport {
   CrashReport(reason: Dynamic)
 }
 
+/// A process a test started that was still alive when the test ended, named
+/// by what started it: the module and function of the spawned call, or the
+/// function a spawned closure was written in. Not a failure — the process is
+/// killed and the leak reported, so it can neither pollute a later test nor
+/// crash after its own test has been reported.
+pub type ProcessLeak {
+  ProcessLeak(module: String, function: String, arity: Int)
+}
+
 /// The top frame of the stacktrace behind a non-Gleam crash: what was being
 /// called when the test died. An undef from a stale .beam carries no Gleam
 /// payload at all, so this frame is the only thing that names the failure.
@@ -165,7 +174,13 @@ fn classify_report(
     Ok(p) ->
       case classify_panic(test_module, test_function, p) {
         Failed(cause) -> Failed(BackgroundCrashDetail(cause))
-        todo_or_skipped -> todo_or_skipped
+        // A skip is the test body declaring itself pending, never a verdict
+        // on another process's death — but a worker written inline in a test
+        // body carries the enclosing test's own module and function, the
+        // pair classify_panic reads as a skip. Unimplemented code is a todo
+        // wherever it ran.
+        Skipped(p) -> Todo(p)
+        other -> other
       }
     Error(Nil) -> {
       let #(reason, site) = split_crash(report.reason)
