@@ -430,9 +430,15 @@ collect_crashes(TestPid, TestName, Acc, Live) ->
                 note_spawn(Child, MFA, Live));
         {claim, From, Ref, Kill} ->
             From ! {crashes, Ref, lists:reverse(Acc), leaks_of(Live)},
-            case Kill of
-                true -> sweep_leaks(TestPid, TestName, Live);
-                false -> forward_crashes(TestPid, TestName)
+            case {Kill, live_pids(Live)} of
+                %% Nothing outlived the test — the overwhelming majority —
+                %% so there is nothing to sweep and nothing that can spawn
+                %% later: the collector stops here, and claim_crashes skips
+                %% the kill rounds. Both sides must agree on emptiness, so
+                %% both ask live_pids/leaks_of, which filter alike.
+                {true, []} -> ok;
+                {true, _} -> sweep_leaks(TestPid, TestName, Live);
+                {false, _} -> forward_crashes(TestPid, TestName)
             end;
         _Other ->
             collect_crashes(TestPid, TestName, Acc, Live)
@@ -572,9 +578,12 @@ claim_crashes(Collector, KillLeaked) ->
     Collector ! {claim, self(), Ref, KillLeaked},
     {Reasons, Leaks} =
         receive {crashes, Ref, Rs, Ls} -> {Rs, Ls} after 5000 -> {[], []} end,
-    case KillLeaked of
-        true -> kill_leaked(Collector);
-        false -> ok
+    %% No leaks means no sweep, no kill and no second trace flush: a test
+    %% that cleaned up after itself pays nothing for this beyond the claim
+    %% it was already making. The collector has already stopped itself.
+    case {KillLeaked, Leaks} of
+        {true, [_ | _]} -> kill_leaked(Collector);
+        _ -> ok
     end,
     {reasons_to_reports(Reasons), Leaks}.
 
