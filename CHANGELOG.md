@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+A process that crashes now fails the test:
+
+    playground_test.background_job_test
+      Background process crashed at src/playground.gleam:26
+        background job crashed: queue is full
+
+There is also a process leak detector. This doesn't fail the
+run, and `--keep-leaked-processes` leaves them running instead.
+
 ## v1.2.0
 
 Watch mode added for the JavaScript target, supporting both Node and Deno

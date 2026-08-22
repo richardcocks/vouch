@@ -52,6 +52,8 @@ gleam test -- --format=teamcity
 gleam test -- --junit=report.xml
 gleam test -- --timeout=1000            # Erlang target only
 gleam test -- --parallel                # Erlang target only
+gleam test -- --show-crash-reports      # Erlang target only, see below
+gleam test -- --keep-leaked-processes   # Erlang target only, see below
 gleam test -- --color=never             # console colour: auto | always | never
 gleam run -m vouch -- watch             # rerun the suite on file change
 ```
@@ -83,13 +85,29 @@ On Deno, watch mode also needs `allow_run = ["gleam"]` to spawn the inner runs (
 | Outcome | Meaning | Exit code contribution |
 | --- | --- | --- |
 | pass | ran without panic | 0 |
-| fail | assert/panic/crash/timeout | 1 |
-| todo | hit `todo` in code under test | 1 — unimplemented is still not done |
+| fail | assert/panic/crash/timeout, or a process the test started crashed | 1 |
+| todo | hit `todo` in code under test (directly or in a process it started) | 1 — unimplemented is still not done |
 | skip | `todo` within test function | 0 |
+
+## Crash reports
+
+A process that crashes fails the test:
+
+    playground_test.background_job_test
+      Background process crashed at src/playground.gleam:26
+        background job crashed: queue is full
+
+
+## Leaked processes
+
+There is a process leak detector. This does not fail the run.
+You can keep leaked processes alive by passing `--keep-leaked-processes` and they will be left running.
+They will still be reported in the summary.
 
 ## Target differences
 
-Erlang target supports `--parallel` and `--timeout=n`
+Erlang target supports `--parallel`, `--timeout=n`, `--show-crash-reports` and
+`--keep-leaked-processes`
 
 Deno needs permissions in your project's `gleam.toml`.
 You need `allow_read` for discovery and source quoting.

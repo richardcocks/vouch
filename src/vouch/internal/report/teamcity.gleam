@@ -116,11 +116,18 @@ fn test_lines(
 fn failure(function: String, detail: outcome.FailureDetail) -> String {
   case detail {
     outcome.PanicDetail(p) -> panic_failure(function, p)
-    outcome.UnknownDetail(raw) -> failed(function, string.inspect(raw), "")
+    outcome.UnknownDetail(raw, site) ->
+      failed(function, describe.crash(raw, site), "")
     outcome.TimeoutDetail(ms) ->
       failed(function, "timed out after " <> int.to_string(ms) <> "ms", "")
-    outcome.ExitDetail(raw) ->
-      failed(function, "test process died", string.inspect(raw))
+    outcome.ExitDetail(raw, site) ->
+      failed(function, "test process died", describe.crash(raw, site))
+    outcome.BackgroundCrashDetail(_) ->
+      failed(
+        function,
+        "a process the test started crashed",
+        string.join(describe.failure(detail), "\n"),
+      )
   }
 }
 

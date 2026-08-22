@@ -82,9 +82,12 @@ pub type TestOutcome {
 
 pub type FailureDetail {
   PanicDetail(GleamPanic)
-  UnknownDetail(raw: Dynamic)
+  UnknownDetail(raw: Dynamic, site: Option(CrashSite))
   TimeoutDetail(after_ms: Int)
-  ExitDetail(raw: Dynamic)
+  ExitDetail(raw: Dynamic, site: Option(CrashSite))
+  // A process the test started died behind its back; `cause` is the
+  // PanicDetail or UnknownDetail that killed it (Erlang target only).
+  BackgroundCrashDetail(cause: FailureDetail)
 }
 ```
 

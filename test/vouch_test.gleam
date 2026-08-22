@@ -127,24 +127,268 @@ pub fn timeout_classifies_as_failure_test() {
 
 @target(erlang)
 pub fn hanging_test_times_out_test() {
-  let invocation = runner.run_in_process("helpers", "sleeps_forever", 100)
+  let #(invocation, reports) =
+    runner.run_in_process("helpers", "sleeps_forever", 100, True)
   assert invocation == outcome.TimedOut(100)
+  // Killed, not crashed: the BEAM logs nothing for a kill.
+  assert reports == []
 }
 
 @target(erlang)
 pub fn linked_crash_is_contained_test() {
-  let invocation = runner.run_in_process("helpers", "crashes_linked", 5000)
+  let #(invocation, reports) =
+    runner.run_in_process("helpers", "crashes_linked", 5000, True)
   let assert outcome.Failed(outcome.PanicDetail(p)) =
     outcome.classify("vouch_test", "linked_crash_is_contained_test", invocation)
   assert p.message == "crash in linked process"
+  // The linked process is a traced descendant, so its crash is also
+  // collected as a background report — but the test's own death (the same
+  // panic, propagated by the link) is the more specific outcome, so the
+  // fold keeps the PanicDetail rather than a BackgroundCrashDetail.
+  let assert [outcome.CrashReport(_)] = reports
+  assert outcome.with_crash_reports(
+      outcome.classify(
+        "vouch_test",
+        "linked_crash_is_contained_test",
+        invocation,
+      ),
+      "vouch_test",
+      "linked_crash_is_contained_test",
+      reports,
+    )
+    == outcome.Failed(outcome.PanicDetail(p))
 }
+
+// --- Background crashes (Erlang target only) ---
+//
+// A process the test started dies without taking the test down: nothing is
+// linked to or monitoring it, so the test body passes. The BEAM's crash
+// report is the only trace. It is charged to the test and folded into its
+// outcome, so the crash cannot hide behind a pass.
+
+@target(erlang)
+pub fn background_crash_fails_passing_test_test() {
+  let #(invocation, reports) =
+    runner.run_in_process("helpers", "crashes_in_background", 5000, True)
+  assert invocation == outcome.Passed
+  let out =
+    outcome.classify("vouch_test", "background_crash_test", invocation)
+    |> outcome.with_crash_reports(
+      "vouch_test",
+      "background_crash_test",
+      reports,
+    )
+  let assert outcome.Failed(outcome.BackgroundCrashDetail(outcome.PanicDetail(p))) =
+    out
+  assert p.message == "crash in background process"
+  assert p.module == "helpers"
+  assert p.function == "crashes_in_background"
+}
+
+@target(erlang)
+/// Unimplemented code in a background process is a Todo, by the same rule
+/// as a todo the test reached directly.
+pub fn background_todo_is_todo_outcome_test() {
+  let #(invocation, reports) =
+    runner.run_in_process("helpers", "todo_in_background", 5000, True)
+  assert invocation == outcome.Passed
+  let assert outcome.Todo(p) =
+    outcome.classify("vouch_test", "background_todo_test", invocation)
+    |> outcome.with_crash_reports("vouch_test", "background_todo_test", reports)
+  assert p.module == "helpers"
+  assert p.function == "unimplemented"
+}
+
+@target(erlang)
+/// A background crash with no Gleam payload still names what was called.
+pub fn background_undef_names_call_site_test() {
+  let #(_, reports) =
+    runner.run_in_process("helpers", "undef_in_background", 5000, True)
+  let assert outcome.Failed(outcome.BackgroundCrashDetail(outcome.UnknownDetail(
+    reason,
+    Some(site),
+  ))) = outcome.with_crash_reports(outcome.Pass, "vouch_test", "t", reports)
+  assert string.inspect(reason) == "Undef"
+  assert site.module == "vouch_no_such_module"
+  assert site.function == "boom"
+}
+
+@target(erlang)
+/// A worker that outlives its test: still alive when the test's result is
+/// claimed (so no report is charged to the test), then crashes. The runner's
+/// tracer records the late death as unattributed, which fails the run. It is
+/// consumed here — after polling for it to arrive — so this suite run does
+/// not itself fail on it. Killing is off (the `False`), which is the only
+/// way a worker can still be alive to crash late; the default path is
+/// covered by leaked_process_is_killed_and_recorded_test.
+pub fn late_background_crash_becomes_unattributed_test() {
+  let #(invocation, reports) =
+    runner.run_in_process(
+      "helpers",
+      "returns_before_worker_crashes",
+      5000,
+      False,
+    )
+  assert invocation == outcome.Passed
+  assert reports == []
+  let assert [text] = await_unattributed("late crash in background process", 80)
+  assert string.contains(text, "late crash in background process")
+  // Recorded as a leak as well: the worker was alive when the test ended,
+  // and reporting a leak does not depend on killing it.
+  let assert [_] = runner.take_leaks_matching("returns_before_worker_crashes")
+}
+
+@target(erlang)
+/// The same, but late enough that the collector has hibernated first. A
+/// collector that cannot resume — hibernating into a function the module
+/// does not export fails on wake-up, not at the hibernate call — dies with
+/// `undef` and silently drops every crash after the first idle period, so
+/// the test above passes while the feature is broken for anything slower.
+/// Killing off again, for the same reason.
+pub fn crash_after_collector_hibernates_is_unattributed_test() {
+  let #(invocation, reports) =
+    runner.run_in_process(
+      "helpers",
+      "returns_long_before_worker_crashes",
+      5000,
+      False,
+    )
+  assert invocation == outcome.Passed
+  assert reports == []
+  let assert [text] =
+    await_unattributed("crash after the collector hibernated", 120)
+  assert string.contains(text, "crash after the collector hibernated")
+  let assert [_] =
+    runner.take_leaks_matching("returns_long_before_worker_crashes")
+}
+
+@target(erlang)
+/// A background todo must never mark the test skipped. `Skipped` means
+/// "this test body is pending", so `classify_panic` returns it for a todo
+/// whose module and function are the test's own — and a worker written
+/// inline in a test body carries exactly that pair. Folding that into the
+/// outcome would report a test whose worker hit unimplemented code as
+/// skipped, which contributes 0 to the exit code: the crash disappears.
+pub fn background_todo_never_skips_the_test_test() {
+  let #(invocation, reports) =
+    runner.run_in_process("helpers", "todo_in_inline_worker", 5000, True)
+  assert invocation == outcome.Passed
+  let assert outcome.Todo(p) =
+    outcome.with_crash_reports(
+      outcome.Pass,
+      "helpers",
+      "todo_in_inline_worker",
+      reports,
+    )
+  assert p.module == "helpers"
+  assert p.function == "todo_in_inline_worker"
+}
+
+@target(erlang)
+/// The default path for the same worker: it is still alive when the test
+/// ends, so it is killed there and recorded as a leak. Nothing survives to
+/// crash late, so the unattributed table — which the two tests above have
+/// to disable killing to reach at all — stays empty. The leak names what
+/// started the process: a Gleam closure reaches the trace as erlang:apply
+/// over a fun, and only fun_info recovers the function it was written in.
+pub fn leaked_process_is_killed_and_recorded_test() {
+  let #(invocation, reports) =
+    runner.run_in_process("helpers", "leaks_a_doomed_worker", 5000, True)
+  assert invocation == outcome.Passed
+  assert reports == []
+  let assert [#(test_module, test_function, leak)] =
+    runner.take_leaks_matching("leaks_a_doomed_worker")
+  assert test_module == "helpers"
+  assert test_function == "leaks_a_doomed_worker"
+  assert leak
+    == outcome.ProcessLeak(
+      module: "helpers",
+      function: "leaks_a_doomed_worker",
+      arity: 0,
+    )
+  // The worker panics 60ms in. Well past that, nothing has arrived: it was
+  // killed before it could get there, which is what makes this a kill and
+  // not merely a report.
+  sleep_ms(300)
+  assert await_unattributed("doomed worker was not killed", 0) == []
+}
+
+@target(erlang)
+/// A named spawn — not a closure — is reported by its own module and
+/// function, straight from the trace's MFA with no fun_info involved.
+pub fn leak_from_named_spawn_is_recorded_test() {
+  let #(invocation, _) =
+    runner.run_in_process("helpers", "leaks_named_worker", 5000, True)
+  assert invocation == outcome.Passed
+  let assert [#(_, _, leak)] = runner.take_leaks_matching("sleeps_a_long_time")
+  assert leak
+    == outcome.ProcessLeak(
+      module: "helpers",
+      function: "sleeps_a_long_time",
+      arity: 1,
+    )
+}
+
+@target(erlang)
+/// Ancestors die before their children: a supervisor left running is killed
+/// first, so it is gone before its child is touched and cannot restart it.
+/// Both are reported, the supervisor first — the set is ordered by spawn.
+pub fn leaked_supervisor_and_child_are_both_killed_test() {
+  let #(invocation, _) =
+    runner.run_in_process("helpers", "leaks_a_supervisor", 5000, True)
+  assert invocation == outcome.Passed
+  // The supervising process, and whichever children were live at the claim
+  // (one or two, depending on how the 20ms restart tick lands).
+  let assert [#(_, _, parent)] =
+    runner.take_leaks_matching("leaks_a_supervisor")
+  assert parent.function == "leaks_a_supervisor"
+  let children = runner.take_leaks_matching("supervise")
+  assert list.length(children) >= 1
+  // Past the children's 60ms fuse and several restart ticks: nothing was
+  // restarted and nothing crashed, so the parent died before its children.
+  sleep_ms(300)
+  assert await_unattributed("restarted worker crashed", 0) == []
+}
+
+@target(erlang)
+/// The suite's own scaffolding is not a leak. A nested run — a test that
+/// runs a test — spawns the inner test process, its collector and, in
+/// parallel mode, a middleman inside the outer test's traced tree. Reporting
+/// or killing those would be vouch charging the user for its own plumbing.
+pub fn vouch_scaffolding_is_not_reported_as_a_leak_test() {
+  let #(invocation, _) =
+    runner.run_in_process("helpers", "runs_a_nested_test", 5000, True)
+  assert invocation == outcome.Passed
+  assert runner.take_leaks_matching("vouch_ffi") == []
+  assert runner.take_leaks_matching("collect_crashes") == []
+}
+
+@target(erlang)
+/// The unattributed crash reports containing `marker`, consumed, polling
+/// while the late crash may still be pending. Consuming only the matching
+/// rows leaves any other test's unattributed reports alone.
+fn await_unattributed(marker: String, retries: Int) -> List(String) {
+  case runner.take_unattributed_matching(marker) {
+    [] if retries > 0 -> {
+      sleep_ms(25)
+      await_unattributed(marker, retries - 1)
+    }
+    reports -> reports
+  }
+}
+
+@target(erlang)
+@external(erlang, "timer", "sleep")
+fn sleep_ms(ms: Int) -> Nil
 
 @target(erlang)
 /// A todo inside an OTP process (here a real gen_server callback) reaches
 /// the caller wrapped in OTP exit structure. It must still classify as
-/// Todo, not an opaque failure.
+/// Todo, not an opaque failure. Run in its own process so the gen_server's
+/// death is that inner run's business, not this test's.
 pub fn otp_wrapped_todo_is_todo_outcome_test() {
-  let invocation = outcome.from_caught(runner.catch_panic(call_into_todo))
+  let #(invocation, _reports) =
+    runner.run_in_process("vouch_otp_fixture", "call_into_todo", 5000, True)
   let assert outcome.Todo(p) =
     outcome.classify(
       "vouch_test",
@@ -156,17 +400,14 @@ pub fn otp_wrapped_todo_is_todo_outcome_test() {
 }
 
 @target(erlang)
-@external(erlang, "vouch_otp_fixture", "call_into_todo")
-fn call_into_todo() -> Nil
-
-@target(erlang)
 pub fn isolated_pass_and_panic_test() {
   // failing_result returns an Error value, which is still a *passing* test —
   // only panics fail.
-  assert runner.run_in_process("helpers", "failing_result", 5000)
-    == outcome.Passed
-  let assert outcome.Panicked(raw) =
-    runner.run_in_process("helpers", "panics", 5000)
+  assert runner.run_in_process("helpers", "failing_result", 5000, True)
+    == #(outcome.Passed, [])
+  // A panic caught inside the test process is not a crash: no report.
+  let assert #(outcome.Panicked(raw), []) =
+    runner.run_in_process("helpers", "panics", 5000, True)
   let assert Ok(p) = gleam_panic.from_dynamic(raw)
   assert p.message == "helper panicked"
 }
@@ -178,10 +419,10 @@ pub fn isolated_pass_and_panic_test() {
 /// while staying unambiguous.
 pub fn parallel_tests_overlap_test() {
   let t0 = monotonic_microseconds()
-  let a = runner.start_test("helpers", "sleeps_briefly", 5000)
-  let b = runner.start_test("helpers", "sleeps_briefly", 5000)
-  let #(invocation_a, duration_a) = runner.await_test(a)
-  let #(invocation_b, duration_b) = runner.await_test(b)
+  let a = runner.start_test("helpers", "sleeps_briefly", 5000, True)
+  let b = runner.start_test("helpers", "sleeps_briefly", 5000, True)
+  let assert #(invocation_a, [], duration_a) = runner.await_test(a)
+  let assert #(invocation_b, [], duration_b) = runner.await_test(b)
   let elapsed_ms = { monotonic_microseconds() - t0 } / 1000
   assert invocation_a == outcome.Passed
   assert invocation_b == outcome.Passed
@@ -194,14 +435,117 @@ pub fn parallel_tests_overlap_test() {
 /// The parallel path must keep per-test timeout semantics: a started test
 /// that outlives its timeout comes back TimedOut from await.
 pub fn parallel_test_times_out_test() {
-  let handle = runner.start_test("helpers", "sleeps_forever", 100)
-  let #(invocation, _) = runner.await_test(handle)
+  let handle = runner.start_test("helpers", "sleeps_forever", 100, True)
+  let #(invocation, _, _) = runner.await_test(handle)
   assert invocation == outcome.TimedOut(100)
 }
 
 @target(erlang)
 @external(erlang, "vouch_ffi", "now_microseconds")
 fn monotonic_microseconds() -> Int
+
+// --- Crash sites ---
+//
+// A crash that is not a Gleam panic (the motivating case: a stale .beam
+// shadowing a dependency, so every call into it is undef) has no payload to
+// decode. The stacktrace's top frame is the only thing that names what
+// failed, so classification must carry it into the failure detail.
+
+@target(erlang)
+pub fn undef_crash_carries_call_site_test() {
+  let invocation =
+    outcome.from_caught(runner.catch_panic(helpers.calls_missing_function))
+  let assert outcome.Failed(outcome.UnknownDetail(reason, Some(site))) =
+    outcome.classify(
+      "vouch_test",
+      "undef_crash_carries_call_site_test",
+      invocation,
+    )
+  // The reason alone: inspecting it must never dump the stacktrace.
+  assert string.inspect(reason) == "Undef"
+  // An undef frame carries the argument list (arity 0 here) and no
+  // file/line: the called function does not exist anywhere.
+  assert site
+    == outcome.CrashSite(
+      module: "vouch_no_such_module",
+      function: "boom",
+      arity: 0,
+      location: None,
+    )
+}
+
+@target(erlang)
+/// A linked process crashing with a non-Gleam error kills the test process;
+/// the exit reason still carries the stacktrace, so the death report names
+/// the call site rather than dumping raw frames.
+pub fn linked_undef_crash_names_call_site_test() {
+  let #(invocation, reports) =
+    runner.run_in_process("helpers", "crashes_linked_undef", 5000, True)
+  let assert outcome.Failed(outcome.ExitDetail(reason, Some(site))) =
+    outcome.classify(
+      "vouch_test",
+      "linked_undef_crash_names_call_site_test",
+      invocation,
+    )
+  assert string.inspect(reason) == "Undef"
+  assert site.module == "vouch_no_such_module"
+  assert site.function == "boom"
+  assert site.arity == 0
+  // The linked process is a traced descendant, so its undef is also
+  // collected as a background report; the decode is covered by
+  // background_undef_names_call_site_test.
+  let assert [outcome.CrashReport(_)] = reports
+}
+
+@target(erlang)
+/// End to end: the report line a stale .beam produces. "Crashed: Undef"
+/// alone is information-free; the call site is the answer.
+pub fn describe_undef_crash_test() {
+  let invocation =
+    outcome.from_caught(runner.catch_panic(helpers.calls_missing_function))
+  let assert outcome.Failed(detail) =
+    outcome.classify("vouch_test", "describe_undef_crash_test", invocation)
+  assert describe.failure(detail)
+    == ["Crashed: Undef calling vouch_no_such_module:boom/0"]
+}
+
+/// A frame that carries a file and line gets an `at` line, in the same
+/// clickable file:line shape as panic locations.
+pub fn describe_crash_site_location_test() {
+  let site =
+    outcome.CrashSite(
+      module: "filepath",
+      function: "split",
+      arity: 1,
+      location: Some(#("src/filepath.erl", 145)),
+    )
+  assert describe.failure(outcome.UnknownDetail(
+      dynamic.string("boom"),
+      Some(site),
+    ))
+    == [
+      "Crashed: \"boom\" calling filepath:split/1",
+      "  at src/filepath.erl:145",
+    ]
+}
+
+/// No recognisable stacktrace — every JavaScript crash, exotic BEAM exit
+/// reasons — falls back to the reason alone, exactly as before.
+pub fn describe_crash_without_site_test() {
+  assert describe.failure(outcome.UnknownDetail(dynamic.string("boom"), None))
+    == ["Crashed: \"boom\""]
+  assert describe.failure(outcome.ExitDetail(dynamic.string("kill"), None))
+    == ["Test process died: \"kill\""]
+}
+
+/// A death with a known site reads like a crash: the reason, then what was
+/// being called.
+pub fn describe_exit_with_site_test() {
+  let site =
+    outcome.CrashSite(module: "m", function: "f", arity: 2, location: None)
+  assert describe.failure(outcome.ExitDetail(dynamic.string("boom"), Some(site)))
+    == ["Test process died: \"boom\" calling m:f/2"]
+}
 
 // --- Tally and exit codes ---
 
@@ -467,6 +811,8 @@ pub fn config_defaults_test() {
       timeout_ms: config.default_timeout_ms,
       color: config.Auto,
       parallel: config.Sequential,
+      show_crash_reports: False,
+      kill_leaked_processes: True,
     ))
 }
 
@@ -479,6 +825,8 @@ pub fn config_format_and_filter_test() {
       timeout_ms: config.default_timeout_ms,
       color: config.Auto,
       parallel: config.Sequential,
+      show_crash_reports: False,
+      kill_leaked_processes: True,
     ))
   assert config.from_args([
       "--filter=decode",
@@ -492,6 +840,8 @@ pub fn config_format_and_filter_test() {
       timeout_ms: 250,
       color: config.Auto,
       parallel: config.Sequential,
+      show_crash_reports: False,
+      kill_leaked_processes: True,
     ))
 }
 
@@ -517,6 +867,22 @@ pub fn config_parallel_test() {
     config.from_args(["--parallel=4"])
   let assert Error(_) = config.from_args(["--parallel=0"])
   let assert Error(_) = config.from_args(["--parallel=lots"])
+}
+
+pub fn config_show_crash_reports_test() {
+  let assert Ok(config.Config(show_crash_reports: True, ..)) =
+    config.from_args(["--show-crash-reports"])
+  // A flag, not an option: a value is an error like any unknown flag.
+  let assert Error(_) = config.from_args(["--show-crash-reports=yes"])
+}
+
+/// Killing leaked processes is the default; the flag only turns it off.
+pub fn config_keep_leaked_processes_test() {
+  let assert Ok(config.Config(kill_leaked_processes: True, ..)) =
+    config.from_args([])
+  let assert Ok(config.Config(kill_leaked_processes: False, ..)) =
+    config.from_args(["--keep-leaked-processes"])
+  let assert Error(_) = config.from_args(["--keep-leaked-processes=no"])
 }
 
 pub fn config_color_test() {
@@ -792,4 +1158,153 @@ pub fn jsonl_todo_result_test() {
     <> "\"outcome\":\"todo\",\"duration_us\":10,\"message\":\"m\","
     <> "\"site_module\":\"some_module\",\"site_function\":\"some_function\","
     <> "\"site_line\":1}"
+}
+
+/// A crash site reaches JSON consumers as structured fields, following the
+/// site_* naming the todo outcome already uses. File and line appear only
+/// when the frame carried them.
+pub fn jsonl_crash_site_test() {
+  let site =
+    outcome.CrashSite(
+      module: "filepath",
+      function: "split",
+      arity: 1,
+      location: Some(#("src/filepath.erl", 145)),
+    )
+  let out =
+    outcome.Failed(outcome.UnknownDetail(dynamic.string("boom"), Some(site)))
+  assert jsonl.event_to_json(event.TestResult("m", "f", out, 10))
+    == "{\"event\":\"test_result\",\"module\":\"m\",\"function\":\"f\","
+    <> "\"outcome\":\"fail\",\"duration_us\":10,\"kind\":\"unknown\","
+    <> "\"message\":\"\\\"boom\\\"\",\"site_module\":\"filepath\","
+    <> "\"site_function\":\"split\",\"site_arity\":1,"
+    <> "\"site_file\":\"src/filepath.erl\",\"site_line\":145}"
+}
+
+/// The TeamCity and JUnit failure messages carry the same call site as the
+/// console wording.
+pub fn teamcity_crash_site_test() {
+  let site =
+    outcome.CrashSite(
+      module: "filepath",
+      function: "split",
+      arity: 1,
+      location: None,
+    )
+  let #(_, lines) =
+    teamcity.step(
+      None,
+      event.TestResult(
+        "m_test",
+        "x_test",
+        outcome.Failed(outcome.UnknownDetail(dynamic.string("boom"), Some(site))),
+        0,
+      ),
+    )
+  assert string.contains(string.join(lines, "\n"), "calling filepath:split/1")
+}
+
+pub fn junit_crash_site_test() {
+  let site =
+    outcome.CrashSite(
+      module: "filepath",
+      function: "split",
+      arity: 1,
+      location: None,
+    )
+  let results = [
+    #(
+      "m_test",
+      "x_test",
+      outcome.Failed(outcome.UnknownDetail(dynamic.string("boom"), Some(site))),
+      0,
+    ),
+  ]
+  let xml = junit.render(results, 0)
+  assert string.contains(xml, "calling filepath:split/1")
+}
+
+// --- Background crashes: outcome folding and rendering ---
+
+fn background_panic() -> gleam_panic.GleamPanic {
+  gleam_panic.GleamPanic(
+    message: "queue is full",
+    file: "src/jobs.gleam",
+    module: "jobs",
+    function: "run",
+    line: 25,
+    kind: gleam_panic.Panic,
+  )
+}
+
+/// The more severe verdict wins, the test's own on a tie: a report never
+/// downgrades a failure, and a passing test takes the report's verdict.
+pub fn with_crash_reports_severity_test() {
+  let raw = outcome.CrashReport(reason: dynamic.string("boom"))
+  let own = outcome.Failed(outcome.TimeoutDetail(100))
+  assert outcome.with_crash_reports(own, "m", "t", [raw]) == own
+  assert outcome.with_crash_reports(outcome.Pass, "m", "t", []) == outcome.Pass
+  assert outcome.with_crash_reports(outcome.Pass, "m", "t", [raw])
+    == outcome.Failed(
+      outcome.BackgroundCrashDetail(outcome.UnknownDetail(
+        dynamic.string("boom"),
+        None,
+      )),
+    )
+}
+
+pub fn describe_background_panic_test() {
+  assert describe.failure(
+      outcome.BackgroundCrashDetail(outcome.PanicDetail(background_panic())),
+    )
+    == ["Background process crashed at src/jobs.gleam:25", "  queue is full"]
+}
+
+pub fn describe_background_raw_crash_test() {
+  let site =
+    outcome.CrashSite(
+      module: "filepath",
+      function: "split",
+      arity: 1,
+      location: Some(#("src/filepath.erl", 145)),
+    )
+  assert describe.failure(
+      outcome.BackgroundCrashDetail(outcome.UnknownDetail(
+        dynamic.string("boom"),
+        Some(site),
+      )),
+    )
+    == [
+      "Background process crashed: \"boom\" calling filepath:split/1",
+      "  at src/filepath.erl:145",
+    ]
+}
+
+/// The cause is nested under its own key, encoded exactly as the same
+/// crash would be for the test itself.
+pub fn jsonl_background_crash_test() {
+  let out =
+    outcome.Failed(
+      outcome.BackgroundCrashDetail(outcome.PanicDetail(background_panic())),
+    )
+  assert jsonl.event_to_json(event.TestResult("m", "f", out, 10))
+    == "{\"event\":\"test_result\",\"module\":\"m\",\"function\":\"f\","
+    <> "\"outcome\":\"fail\",\"duration_us\":10,\"kind\":\"background_crash\","
+    <> "\"cause\":{\"message\":\"queue is full\",\"file\":\"src/jobs.gleam\","
+    <> "\"line\":25,\"kind\":\"panic\"}}"
+}
+
+pub fn teamcity_and_junit_background_crash_test() {
+  let out =
+    outcome.Failed(
+      outcome.BackgroundCrashDetail(outcome.PanicDetail(background_panic())),
+    )
+  let #(_, lines) =
+    teamcity.step(None, event.TestResult("m_test", "x_test", out, 0))
+  let tc = string.join(lines, "\n")
+  assert string.contains(tc, "a process the test started crashed")
+  assert string.contains(tc, "Background process crashed at src/jobs.gleam:25")
+  let xml = junit.render([#("m_test", "x_test", out, 0)], 0)
+  assert string.contains(xml, "type=\"background_crash\"")
+  assert string.contains(xml, "Background process crashed at src/jobs.gleam:25")
 }
