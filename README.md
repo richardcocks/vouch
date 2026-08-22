@@ -91,49 +91,18 @@ On Deno, watch mode also needs `allow_run = ["gleam"]` to spawn the inner runs (
 
 ## Crash reports
 
-On the Erlang target, a process that dies *with* a test (a linked process crashing, an actor
-the test is calling hitting a `todo`) is reported through the test's own outcome. A process
-that dies *behind* a test — an unlinked worker, a fire-and-forget job nothing is monitoring —
-would leave the test passing (this is what gleeunit does), with the BEAM's crash report as the
-only trace. vouch traces each test's process tree, so a process it started that crashes is
-caught and charged to that test, and the test fails:
+A process that crashes fails the test:
 
-```
-  playground_test.background_job_test
-    Background process crashed at src/playground.gleam:26
-      background job crashed: queue is full
-```
+    playground_test.background_job_test
+      Background process crashed at src/playground.gleam:26
+        background job crashed: queue is full
 
-If the process died of a `todo`, the test is a todo instead. A crash from a process that
-outlived its test, or that no test started, is reported at the end and fails the run. The
-BEAM's own crash reports are kept off the output streams (they used to interleave with it on
-stderr); pass `--show-crash-reports` to print them in full as one block after the summary.
-Other logger output (a library's warnings) is not a crash and still goes to stderr.
 
 ## Leaked processes
 
-Process-per-test isolates the test *function*, not everything it spawns: nothing in the BEAM
-tears down a test's process tree, and a `normal` exit does not kill a linked child, so a worker
-a test starts keeps running until it stops on its own — during later tests, and past the point
-where its own test was reported.
-
-On the Erlang target vouch closes that: the same trace that catches background crashes also
-names every process a test started that is still alive when the test ends. Those are killed
-there — ancestors first, so a process restarting its children is gone before they are touched —
-and listed after the summary, named by the test that leaked them and by what started them:
-
-```
-vouch: 1 leaked process killed after the test that started them:
-vouch: playground_test.leaky_worker_test left playground:start_long_worker/0 running
-```
-
-A leak does not fail the run. The process was cleaned up before it could reach another test,
-and the report is what stops that being silent. Pass `--keep-leaked-processes` to leave them
-running and only report them — you need it for a suite that deliberately shares a process
-across tests, or where a leaked process is linked to something outside the test's tree, since
-killing it would propagate along that link. What a test starts through an already-running
-supervisor or `application:start` is spawned elsewhere and is never in the test's tree, so it
-is neither reported nor killed.
+There is a process leak detector. This does not fail the run.
+You can keep leaked processes alive by passing `--keep-leaked-processes` and they will be left running.
+They will still be reported in the summary.
 
 ## Target differences
 
