@@ -11,11 +11,8 @@ A process that crashes now fails the test:
 There is also a process leak detector. This doesn't fail the
 run, and `--keep-leaked-processes` leaves them running instead.
 
-Watch mode can switch the inner target between runs: `j` reruns on
-JavaScript, `l` on Erlang, `k` toggles between the two. On the JavaScript
-host these are single keypresses like the existing keys; on the Erlang
-host they are key + Enter, like `q`. The run banner now names the target.
-Each cycle still runs one target only.
+Watch mode can now switch the inner target between runs, with keys 'j', 'k', and 'l' to switch to Javascript, toggle 
+between them, and switch to Erlang respectively.
 
 ## v1.2.0
 
