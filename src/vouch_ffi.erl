@@ -868,33 +868,42 @@ ensure_unicode_stdio() ->
     catch io:setopts(standard_error, [{encoding, unicode}]),
     nil.
 
-%% Quitting the watch loop: a stdin listener that halts on "q" + Enter.
-%% This is the only clean quit the BEAM allows a long-running foreground
-%% program: SIGINT belongs to the emulator's break handler and cannot be
-%% taken over (os:set_signal(sigint, handle) is badarg), and booting with
-%% +Bd/+Bi merely turns Ctrl+C into a no-op, so Ctrl+C either opens the
-%% BREAK menu or does nothing. The inner runs never contend for stdin —
-%% their ports get pipes. eof means stdin is not interactive (piped or
-%% closed), so the listener just retires rather than treating it as a
-%% quit.
+%% The watch loop's keys on the BEAM: a stdin listener that reads whole
+%% lines (key + Enter), halting on "q" and posting the target keys
+%% ("j" javascript, "l" erlang, "k" switch) to the watch loop as
+%% messages, which take_pending_key/0 drains. Lines rather than raw
+%% keypresses because this is the only clean quit the BEAM allows a
+%% long-running foreground program: SIGINT belongs to the emulator's
+%% break handler and cannot be taken over (os:set_signal(sigint, handle)
+%% is badarg), and booting with +Bd/+Bi merely turns Ctrl+C into a no-op,
+%% so Ctrl+C either opens the BREAK menu or does nothing. The inner runs
+%% never contend for stdin — their ports get pipes. eof means stdin is
+%% not interactive (piped or closed), so the listener just retires rather
+%% than treating it as a quit.
 %%
 %% Callers must only install this when stdout is a terminal: with stdout
 %% redirected on Windows, the read itself is fatal — prim_tty's reader
 %% dies on ReadConsoleW before ever returning eof, and its crash takes
 %% user_drv (and with it every subsequent stdout write) down too.
 install_quit_hooks() ->
-    spawn(fun quit_listener/0),
+    Watcher = self(),
+    spawn(fun() -> quit_listener(Watcher) end),
     nil.
 
-%% The watch loop polls this for the JavaScript interactive keys
-%% (Enter / a / q). The BEAM has no key worker — its quit listener
-%% handles stdin — so there is never a pending key here.
-take_pending_key() -> 0.
+%% The watch loop polls this for key commands (see the integer table in
+%% watch.gleam). On the BEAM they arrive as messages from the stdin
+%% listener; nothing pending answers 0.
+take_pending_key() ->
+    receive
+        {vouch_watch_key, Command} -> Command
+    after 0 ->
+        0
+    end.
 
 %% Unreachable: print_status only asks on the JavaScript target.
 keys_active() -> erlang:error(javascript_only).
 
-quit_listener() ->
+quit_listener(Watcher) ->
     case io:get_line("") of
         eof ->
             ok;
@@ -904,9 +913,16 @@ quit_listener() ->
             case string:trim(unicode:characters_to_list(Line)) of
                 "q" -> erlang:halt(0);
                 "quit" -> erlang:halt(0);
-                _ -> quit_listener()
+                "j" -> post_key(Watcher, 4);
+                "l" -> post_key(Watcher, 5);
+                "k" -> post_key(Watcher, 6);
+                _ -> quit_listener(Watcher)
             end
     end.
+
+post_key(Watcher, Command) ->
+    Watcher ! {vouch_watch_key, Command},
+    quit_listener(Watcher).
 
 beam_name(ModuleName) ->
     binary:replace(ModuleName, <<"/">>, <<"@">>, [global]).

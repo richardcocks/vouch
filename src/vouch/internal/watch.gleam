@@ -38,17 +38,20 @@ pub fn run(args: List(String)) -> Nil {
     False -> Nil
   }
   let color = term.should_use_color(config.Auto)
-  case inner_args(args, color, runner.target()) {
+  case parse_watch_args(args, color, runner.target()) {
     Error(message) -> {
       io.println_error(message)
       runner.halt(2)
     }
-    Ok(inner) -> loop(inner, color, interactive, 1)
+    Ok(#(target, flags)) -> loop(target, flags, color, interactive, 1)
   }
 }
 
+/// The target is loop state rather than baked into the argument list,
+/// because the `j` / `l` / `k` keys change it between cycles.
 fn loop(
-  inner: List(String),
+  target: String,
+  flags: List(String),
   color: Bool,
   interactive: Bool,
   run_number: Int,
@@ -60,37 +63,49 @@ fn loop(
   io.println(paint(
     color,
     dim,
-    "vouch watch · run " <> int.to_string(run_number),
+    "vouch watch · run " <> int.to_string(run_number) <> " · " <> target,
   ))
-  case run_passthrough("gleam", inner) {
+  case run_passthrough("gleam", build_inner(target, flags)) {
     Error(Nil) -> {
       io.println_error("vouch: could not find `gleam` on PATH")
       runner.halt(2)
     }
     Ok(code) -> {
       print_status(code, color, interactive)
-      wait_for_change(before)
-      loop(inner, color, interactive, run_number + 1)
+      let next = wait_for_change(before, target)
+      loop(next, flags, color, interactive, run_number + 1)
     }
   }
 }
 
-fn wait_for_change(before: List(#(String, Int, Int))) -> Nil {
+/// Block until the next cycle is due, returning the target it should run
+/// on: the current one for a file change or a plain rerun, the chosen one
+/// for the target keys.
+fn wait_for_change(
+  before: List(#(String, Int, Int)),
+  current: String,
+) -> String {
   sleep_ms(poll_interval_ms)
   case pending_command() {
     // Enter reruns with the current settings; `a` runs the full suite.
     // They do the same thing until test filtering exists — then `a` will
     // also clear the filter — but they are distinct commands on purpose,
     // mirroring the Jest/Vitest watch keys.
-    ForceRerun -> Nil
-    RunAll -> Nil
+    ForceRerun -> current
+    RunAll -> current
+    UseJavaScript -> "javascript"
+    UseErlang -> "erlang"
+    ToggleTarget -> toggle_target(current)
     // Not runner.halt: on JavaScript that defers the exit to a callback
     // this loop never lets run, so it would fall through as a rerun.
-    Quit -> halt_now(0)
+    Quit -> {
+      halt_now(0)
+      current
+    }
     NoCommand ->
       case snapshot(watched) == before {
-        True -> wait_for_change(before)
-        False -> Nil
+        True -> wait_for_change(before, current)
+        False -> current
       }
   }
 }
@@ -100,17 +115,32 @@ type WatchCommand {
   ForceRerun
   RunAll
   Quit
+  UseJavaScript
+  UseErlang
+  ToggleTarget
 }
 
-/// Key commands arrive from the JavaScript key worker as integers
-/// (0 none, 1 Enter, 2 `a`, 3 quit); the Erlang side always answers 0
-/// and keeps its own stdin quit listener.
+/// Key commands arrive as integers (0 none, 1 Enter, 2 `a`, 3 quit,
+/// 4 `j` javascript, 5 `l` erlang, 6 `k` switch target) — from the
+/// JavaScript key worker as raw keypresses, from the Erlang stdin
+/// listener as key + Enter lines.
 fn pending_command() -> WatchCommand {
   case take_pending_key() {
     1 -> ForceRerun
     2 -> RunAll
     3 -> Quit
+    4 -> UseJavaScript
+    5 -> UseErlang
+    6 -> ToggleTarget
     _ -> NoCommand
+  }
+}
+
+/// The other target. Pure so the key handling is unit-testable.
+pub fn toggle_target(target: String) -> String {
+  case target {
+    "erlang" -> "javascript"
+    _ -> "erlang"
   }
 }
 
@@ -121,15 +151,18 @@ fn print_status(code: Int, color: Bool, interactive: Bool) -> Nil {
   }
   // The hint only holds for an interactive terminal, and the mechanism
   // differs per target: the BEAM owns SIGINT (Ctrl+C opens its BREAK
-  // menu), so quitting there is a stdin listener; on JavaScript a key
-  // worker listens for the Jest/Vitest-style keys, and when it could not
-  // be installed the runtime's default SIGINT disposition still quits.
+  // menu), so its keys are a line-based stdin listener (key + Enter); on
+  // JavaScript a key worker listens for raw Jest/Vitest-style keypresses,
+  // and when it could not be installed the runtime's default SIGINT
+  // disposition still quits.
   let quit_hint = case interactive, runner.target() {
     False, _ -> ""
-    True, runner.Erlang -> " · q then Enter to quit"
+    True, runner.Erlang ->
+      " · j/l/k then Enter for javascript/erlang/switch · q then Enter to quit"
     True, runner.JavaScript ->
       case keys_active() {
-        True -> " · Enter to rerun · a to run all · q to quit"
+        True ->
+          " · Enter to rerun · a to run all · j/l for javascript/erlang · k to switch · q to quit"
         False -> " · Ctrl+C to quit"
       }
   }
@@ -144,12 +177,26 @@ fn print_status(code: Int, color: Bool, interactive: Bool) -> Nil {
   )
 }
 
-/// Build the argument list for the spawned `gleam` invocation. Separated
-/// from the loop so it is unit-testable: hoists `--target=x` to the build
-/// tool's side of the `--`, validates the remaining flags with the same
-/// parser the inner run will use (so mistakes fail once, loudly, instead
-/// of on every cycle), and appends `--color=always` when the watcher's
-/// terminal renders colour and the user did not choose otherwise.
+/// Build the argument list for the spawned `gleam` invocation: the
+/// starting target and flags from `parse_watch_args`, assembled by
+/// `build_inner`. Kept as one call for the tests and as the reference
+/// for what a first cycle runs.
+pub fn inner_args(
+  args: List(String),
+  color: Bool,
+  host: runner.Target,
+) -> Result(List(String), String) {
+  use #(target, flags) <- result.try(parse_watch_args(args, color, host))
+  Ok(build_inner(target, flags))
+}
+
+/// Resolve the watcher's arguments into the starting inner target and
+/// the flags for the inner run. Separated from the loop so it is
+/// unit-testable: hoists `--target=x` to the build tool's side of the
+/// `--`, validates the remaining flags with the same parser the inner
+/// run will use (so mistakes fail once, loudly, instead of on every
+/// cycle), and appends `--color=always` when the watcher's terminal
+/// renders colour and the user did not choose otherwise.
 ///
 /// The inner target defaults to the watcher's own target, so
 /// `gleam run --target javascript -m vouch -- watch` watches JavaScript
@@ -157,12 +204,13 @@ fn print_status(code: Int, color: Bool, interactive: Bool) -> Nil {
 /// after the `--` still overrides — an Erlang-hosted watcher can drive
 /// JavaScript runs and vice versa. The target is always passed to the
 /// inner run explicitly: when neither flag was given, the watcher's
-/// target is the project default anyway, so pinning it changes nothing.
-pub fn inner_args(
+/// target is the project default anyway, so pinning it changes nothing —
+/// and the target keys then swap it between cycles.
+pub fn parse_watch_args(
   args: List(String),
   color: Bool,
   host: runner.Target,
-) -> Result(List(String), String) {
+) -> Result(#(String, List(String)), String) {
   use #(target, flags) <- result.try(split_target(args, None, []))
   let flags = case color && !has_color_flag(flags) {
     True -> list.append(flags, ["--color=always"])
@@ -174,7 +222,12 @@ pub fn inner_args(
     None, runner.Erlang -> "erlang"
     None, runner.JavaScript -> "javascript"
   }
-  Ok(list.flatten([["test", "--target", target, "--"], flags]))
+  Ok(#(target, flags))
+}
+
+/// The `gleam` argument list for one cycle on the given target.
+pub fn build_inner(target: String, flags: List(String)) -> List(String) {
+  list.flatten([["test", "--target", target, "--"], flags])
 }
 
 // Both `--target=x` and `--target x` are accepted, matching the build

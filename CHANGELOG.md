@@ -11,6 +11,9 @@ A process that crashes now fails the test:
 There is also a process leak detector. This doesn't fail the
 run, and `--keep-leaked-processes` leaves them running instead.
 
+Watch mode can now switch the inner target between runs, with keys 'j', 'k', and 'l' to switch to Javascript, toggle 
+between them, and switch to Erlang respectively.
+
 ## v1.2.0
 
 Watch mode added for the JavaScript target, supporting both Node and Deno
